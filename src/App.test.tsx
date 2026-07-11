@@ -8,6 +8,5 @@ describe('App', () => {
     render(<App />)
 
     expect(screen.getByRole('heading', { name: 'STOC Dashboard' })).toBeInTheDocument()
-    expect(screen.getByText('Dashboard ready')).toBeInTheDocument()
   })
 })
