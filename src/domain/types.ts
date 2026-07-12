@@ -40,6 +40,38 @@ export interface DeviceAdapter {
   subscribe(listener: (event: DeviceEvent) => void): () => void;
 }
 
+export interface RunMetadata {
+  meterSerialNumber?: string;
+  operatorName?: string;
+  notes?: string;
+}
+
+export interface TestResult {
+  id: string;
+  startedAt: number;
+  completedAt: number;
+  adapterKind: AdapterKind;
+  metadata: RunMetadata;
+  profile: TestProfile;
+  samples: number[];
+  rawPeak: number;
+  outcome: 'sequence-complete';
+}
+
+export interface ControllerLogEntry {
+  timestamp: number;
+  level: 'status' | 'diagnostic' | 'error';
+  message: string;
+}
+
+export interface ControllerSnapshot {
+  state: TestState;
+  logs: ControllerLogEntry[];
+  metadata?: RunMetadata;
+  result?: TestResult;
+  connectionLabel?: string;
+}
+
 type UnconfiguredStatus = 'disconnected' | 'connecting' | 'connected';
 type ProfileStatus = 'configured' | 'armed' | 'firing' | 'capturing' | 'complete';
 

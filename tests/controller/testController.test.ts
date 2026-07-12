@@ -1,0 +1,178 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { TestController } from '../../src/controller/testController';
+import { PROFILES } from '../../src/domain/profiles';
+import type { DeviceAdapter, DeviceEvent, RunMetadata, TestProfile } from '../../src/domain/types';
+
+class FakeAdapter implements DeviceAdapter {
+  readonly kind = 'simulator' as const;
+  readonly listeners = new Set<(event: DeviceEvent) => void>();
+  connect = vi.fn(async (_target?: string) => undefined);
+  disconnect = vi.fn(async () => undefined);
+  selectProfile = vi.fn(async (_profile: TestProfile) => undefined);
+  fire = vi.fn(async () => undefined);
+
+  subscribe(listener: (event: DeviceEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  emit(event: DeviceEvent): void {
+    for (const listener of this.listeners) listener(event);
+  }
+}
+
+const metadata: RunMetadata = {
+  meterSerialNumber: 'MTR-42',
+  operatorName: 'A. Operator',
+  notes: 'Bench run',
+};
+
+async function connectedController() {
+  const adapter = new FakeAdapter();
+  const controller = new TestController({
+    now: () => 1_000,
+    createId: () => 'run-id',
+  });
+  const connecting = controller.connect(adapter, 'COM7');
+  adapter.emit({ type: 'connected', label: 'Fake STOC' });
+  await connecting;
+  return { adapter, controller };
+}
+
+async function configuredController() {
+  const setup = await connectedController();
+  const selecting = setup.controller.selectProfile('single-phase');
+  setup.adapter.emit({ type: 'mode-confirmed', profileId: 'single-phase' });
+  await selecting;
+  return setup;
+}
+
+describe('TestController', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('completes a run and creates a raw sequence result with defensive sample copies', async () => {
+    const { adapter, controller } = await configuredController();
+    const snapshots: string[] = [];
+    controller.subscribe((snapshot) => snapshots.push(snapshot.state.status));
+    controller.arm(metadata);
+
+    const firing = controller.fire();
+    adapter.emit({ type: 'firing' });
+    adapter.emit({ type: 'fire-complete' });
+    const samples = [512, 900, 640];
+    adapter.emit({ type: 'waveform', samples });
+    await firing;
+    samples[1] = 1;
+
+    const snapshot = controller.getSnapshot();
+    expect(snapshot.state.status).toBe('complete');
+    expect(snapshots).toContain('capturing');
+    expect(snapshot.result).toEqual({
+      id: 'run-id',
+      startedAt: 1_000,
+      completedAt: 1_000,
+      adapterKind: 'simulator',
+      metadata,
+      profile: PROFILES['single-phase'],
+      samples: [512, 900, 640],
+      rawPeak: 900,
+      outcome: 'sequence-complete',
+    });
+    expect(snapshot.result).not.toHaveProperty('amps');
+    expect(adapter.connect).toHaveBeenCalledWith('COM7');
+  });
+
+  it('rejects premature and repeated fire without sending extra adapter commands', async () => {
+    const { adapter, controller } = await configuredController();
+    await expect(controller.fire()).rejects.toThrow('Test is not armed');
+    controller.arm(metadata);
+    const first = controller.fire();
+    await expect(controller.fire()).rejects.toThrow('Test is not armed');
+    expect(adapter.fire).toHaveBeenCalledTimes(1);
+    adapter.emit({ type: 'firing' });
+    adapter.emit({ type: 'error', message: 'stop' });
+    await expect(first).rejects.toThrow('stop');
+  });
+
+  it.each([
+    ['connection', 3_000, async (controller: TestController, adapter: FakeAdapter) => controller.connect(adapter)],
+    ['mode confirmation', 2_000, async (controller: TestController, adapter: FakeAdapter) => {
+      const connecting = controller.connect(adapter);
+      adapter.emit({ type: 'connected', label: 'Fake' });
+      await connecting;
+      return controller.selectProfile('single-phase');
+    }],
+    ['firing acknowledgement', 2_000, async (controller: TestController, adapter: FakeAdapter) => {
+      const connecting = controller.connect(adapter);
+      adapter.emit({ type: 'connected', label: 'Fake' });
+      await connecting;
+      const selecting = controller.selectProfile('single-phase');
+      adapter.emit({ type: 'mode-confirmed', profileId: 'single-phase' });
+      await selecting;
+      controller.arm(metadata);
+      return controller.fire();
+    }],
+  ])('settles with an error on %s timeout', async (_name, delay, start) => {
+    const adapter = new FakeAdapter();
+    const controller = new TestController();
+    const pending = start(controller, adapter);
+    const rejection = expect(pending).rejects.toThrow(/timed out/i);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(delay);
+    await rejection;
+    expect(controller.getSnapshot().state.status).toBe('error');
+  });
+
+  it('times out waveform completion after profile duration plus three seconds', async () => {
+    const { adapter, controller } = await configuredController();
+    controller.arm(metadata);
+    const pending = controller.fire();
+    const rejection = expect(pending).rejects.toThrow(/waveform.*timed out/i);
+    adapter.emit({ type: 'firing' });
+    await vi.advanceTimersByTimeAsync(PROFILES['single-phase'].durationMs + 3_000);
+    await rejection;
+    expect(controller.getSnapshot().state.status).toBe('error');
+  });
+
+  it('settles active work and returns to disconnected on connection loss', async () => {
+    const { adapter, controller } = await configuredController();
+    controller.arm(metadata);
+    const pending = controller.fire();
+    adapter.emit({ type: 'disconnected' });
+    await expect(pending).rejects.toThrow(/disconnected/i);
+    expect(controller.getSnapshot().state.status).toBe('disconnected');
+  });
+
+  it('ignores stale events from an old adapter after reconnecting', async () => {
+    const first = new FakeAdapter();
+    const second = new FakeAdapter();
+    const controller = new TestController();
+    const firstConnection = controller.connect(first);
+    first.emit({ type: 'connected', label: 'First' });
+    await firstConnection;
+    await controller.disconnect();
+    const secondConnection = controller.connect(second);
+    first.emit({ type: 'error', message: 'stale failure' });
+    second.emit({ type: 'connected', label: 'Second' });
+    await secondConnection;
+    expect(controller.getSnapshot().state.status).toBe('connected');
+  });
+
+  it('isolates subscriber exceptions and unsubscribes cleanly', async () => {
+    const adapter = new FakeAdapter();
+    const controller = new TestController();
+    controller.subscribe(() => { throw new Error('observer bug'); });
+    const healthy = vi.fn();
+    const unsubscribe = controller.subscribe(healthy);
+    const pending = controller.connect(adapter);
+    adapter.emit({ type: 'connected', label: 'Fake' });
+    await pending;
+    expect(healthy).toHaveBeenCalled();
+    unsubscribe();
+    const count = healthy.mock.calls.length;
+    await controller.disconnect();
+    expect(healthy).toHaveBeenCalledTimes(count);
+  });
+});
