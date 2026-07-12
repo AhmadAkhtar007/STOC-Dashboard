@@ -9,7 +9,9 @@
   "scripts": {
     "dev": "vite",
     "build:web": "tsc -b && vite build",
-    "test": "vitest run"
+    "pretest": "npm run test:types",
+    "test": "vitest run",
+    "test:types": "tsc -p tsconfig.types.json"
   },
   "dependencies": {
     "react": "^19.1.1",

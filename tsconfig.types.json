@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.types.tsbuildinfo",
+    "strict": true
+  },
+  "include": [],
+  "files": ["tests/domain/testState.types.ts"]
+}
