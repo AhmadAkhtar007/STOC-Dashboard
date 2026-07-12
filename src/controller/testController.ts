@@ -56,8 +56,8 @@ export class TestController {
   }
 
   connect(adapter: DeviceAdapter, target?: string): Promise<void> {
-    const generation = ++this.generation;
     this.state = transition(this.state, { type: 'CONNECT' });
+    const generation = ++this.generation;
     this.log('status', 'Connecting');
     this.adapter = adapter;
     const { promise, operation } = this.waitFor('connect', 3_000, 'Connection timed out');

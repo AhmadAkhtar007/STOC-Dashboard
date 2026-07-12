@@ -391,4 +391,22 @@ describe('TestController', () => {
     });
     expect(adapter.listeners.size).toBe(1);
   });
+
+  it('preserves an active profile operation when a reentrant connect is invalid', async () => {
+    const first = new FakeAdapter();
+    const second = new FakeAdapter();
+    const profileCommand = deferred();
+    first.selectProfile.mockImplementation(() => profileCommand.promise);
+    const controller = new TestController();
+    const connection = controller.connect(first);
+    first.emit({ type: 'connected', label: 'First' });
+    await connection;
+
+    const selection = controller.selectProfile('single-phase');
+    expect(() => controller.connect(second)).toThrow(/only connect/i);
+    profileCommand.reject(new Error('active profile failure'));
+    const rejection = expect(selection).rejects.toThrow('active profile failure');
+    await vi.advanceTimersByTimeAsync(2_000);
+    await rejection;
+  });
 });
