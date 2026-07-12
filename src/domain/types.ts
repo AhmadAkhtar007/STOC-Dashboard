@@ -19,6 +19,27 @@ export interface TestProfile {
   serialCommand: '1' | '2' | '3';
 }
 
+export type AdapterKind = 'simulator' | 'serial';
+
+export type DeviceEvent =
+  | { type: 'connected'; label: string }
+  | { type: 'disconnected' }
+  | { type: 'mode-confirmed'; profileId: ProfileId }
+  | { type: 'firing' }
+  | { type: 'fire-complete' }
+  | { type: 'waveform'; samples: number[] }
+  | { type: 'diagnostic'; message: string }
+  | { type: 'error'; message: string };
+
+export interface DeviceAdapter {
+  readonly kind: AdapterKind;
+  connect(target?: string): Promise<void>;
+  disconnect(): Promise<void>;
+  selectProfile(profile: TestProfile): Promise<void>;
+  fire(): Promise<void>;
+  subscribe(listener: (event: DeviceEvent) => void): () => void;
+}
+
 type UnconfiguredStatus = 'disconnected' | 'connecting' | 'connected';
 type ProfileStatus = 'configured' | 'armed' | 'firing' | 'capturing' | 'complete';
 
