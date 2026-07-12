@@ -22,6 +22,16 @@ class FakeAdapter implements DeviceAdapter {
   }
 }
 
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((settle, fail) => {
+    resolve = settle;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
 const metadata: RunMetadata = {
   meterSerialNumber: 'MTR-42',
   operatorName: 'A. Operator',
@@ -174,5 +184,98 @@ describe('TestController', () => {
     const count = healthy.mock.calls.length;
     await controller.disconnect();
     expect(healthy).toHaveBeenCalledTimes(count);
+  });
+
+  it('ignores a stale connect rejection after a replacement connection starts', async () => {
+    const first = new FakeAdapter();
+    const second = new FakeAdapter();
+    const oldCommand = deferred();
+    first.connect.mockImplementation(() => oldCommand.promise);
+    const controller = new TestController();
+    const oldConnection = controller.connect(first);
+    const oldSettlement = expect(oldConnection).rejects.toThrow(/disconnected/i);
+    await controller.disconnect();
+    await oldSettlement;
+
+    const currentConnection = controller.connect(second);
+    oldCommand.reject(new Error('late old connect failure'));
+    await Promise.resolve();
+    expect(controller.getSnapshot().state.status).toBe('connecting');
+    second.emit({ type: 'connected', label: 'Current' });
+    await currentConnection;
+    expect(controller.getSnapshot().state.status).toBe('connected');
+  });
+
+  it('ignores a stale profile rejection while a replacement profile operation is active', async () => {
+    const first = new FakeAdapter();
+    const second = new FakeAdapter();
+    const oldCommand = deferred();
+    first.selectProfile.mockImplementation(() => oldCommand.promise);
+    const controller = new TestController();
+    let connection = controller.connect(first);
+    first.emit({ type: 'connected', label: 'First' });
+    await connection;
+    const oldSelection = controller.selectProfile('single-phase');
+    const oldSettlement = expect(oldSelection).rejects.toThrow(/disconnected/i);
+    await controller.disconnect();
+    await oldSettlement;
+    connection = controller.connect(second);
+    second.emit({ type: 'connected', label: 'Second' });
+    await connection;
+
+    const currentSelection = controller.selectProfile('ltct');
+    oldCommand.reject(new Error('late old profile failure'));
+    await Promise.resolve();
+    expect(controller.getSnapshot().state.status).toBe('connected');
+    second.emit({ type: 'mode-confirmed', profileId: 'ltct' });
+    await currentSelection;
+    expect(controller.getSnapshot().state).toMatchObject({ status: 'configured', profileId: 'ltct' });
+  });
+
+  it('ignores a stale fire rejection while a replacement run is active', async () => {
+    const first = new FakeAdapter();
+    const second = new FakeAdapter();
+    const oldCommand = deferred();
+    first.fire.mockImplementation(() => oldCommand.promise);
+    const controller = new TestController();
+    let connection = controller.connect(first);
+    first.emit({ type: 'connected', label: 'First' });
+    await connection;
+    let selection = controller.selectProfile('single-phase');
+    first.emit({ type: 'mode-confirmed', profileId: 'single-phase' });
+    await selection;
+    controller.arm(metadata);
+    const oldFire = controller.fire();
+    const oldSettlement = expect(oldFire).rejects.toThrow(/disconnected/i);
+    await controller.disconnect();
+    await oldSettlement;
+
+    connection = controller.connect(second);
+    second.emit({ type: 'connected', label: 'Second' });
+    await connection;
+    selection = controller.selectProfile('single-phase');
+    second.emit({ type: 'mode-confirmed', profileId: 'single-phase' });
+    await selection;
+    controller.arm(metadata);
+    const currentFire = controller.fire();
+    oldCommand.reject(new Error('late old fire failure'));
+    await Promise.resolve();
+    expect(controller.getSnapshot().state.status).toBe('firing');
+    second.emit({ type: 'firing' });
+    second.emit({ type: 'fire-complete' });
+    second.emit({ type: 'waveform', samples: [512, 700] });
+    await currentFire;
+    expect(controller.getSnapshot().state.status).toBe('complete');
+  });
+
+  it('fails and settles the current operation when its adapter command rejects', async () => {
+    const adapter = new FakeAdapter();
+    adapter.connect.mockRejectedValue(new Error('active transport failure'));
+    const controller = new TestController();
+    await expect(controller.connect(adapter)).rejects.toThrow('active transport failure');
+    expect(controller.getSnapshot().state).toMatchObject({
+      status: 'error',
+      error: 'active transport failure',
+    });
   });
 });

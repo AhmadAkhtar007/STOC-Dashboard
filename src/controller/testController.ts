@@ -45,6 +45,7 @@ export class TestController {
   private connectionLabel?: string;
   private startedAt?: number;
   private pending?: PendingOperation;
+  private generation = 0;
 
   constructor(dependencies: ControllerDependencies = {}) {
     this.now = dependencies.now ?? Date.now;
@@ -54,18 +55,22 @@ export class TestController {
   }
 
   connect(adapter: DeviceAdapter, target?: string): Promise<void> {
+    const generation = ++this.generation;
     this.apply({ type: 'CONNECT' }, 'Connecting');
     this.adapter = adapter;
     const activeAdapter = adapter;
     this.unsubscribeAdapter = adapter.subscribe((event) => {
       if (this.adapter === activeAdapter) this.handleEvent(event);
     });
-    const promise = this.waitFor('connect', 3_000, 'Connection timed out');
-    void adapter.connect(target).catch((error: unknown) => this.fail(asError(error).message));
+    const { promise, operation } = this.waitFor('connect', 3_000, 'Connection timed out');
+    void adapter.connect(target).catch((error: unknown) => {
+      if (this.isCurrent(generation, operation)) this.fail(asError(error).message);
+    });
     return promise;
   }
 
   async disconnect(): Promise<void> {
+    this.generation += 1;
     const adapter = this.adapter;
     this.clearPending(new Error('Device disconnected'));
     this.unsubscribeAdapter?.();
@@ -83,8 +88,11 @@ export class TestController {
   selectProfile(profileId: ProfileId): Promise<void> {
     if (!this.adapter) return Promise.reject(new Error('Device is not connected'));
     const profile = PROFILES[profileId];
-    const promise = this.waitFor('profile', 2_000, 'Mode confirmation timed out');
-    void this.adapter.selectProfile(profile).catch((error: unknown) => this.fail(asError(error).message));
+    const generation = this.generation;
+    const { promise, operation } = this.waitFor('profile', 2_000, 'Mode confirmation timed out');
+    void this.adapter.selectProfile(profile).catch((error: unknown) => {
+      if (this.isCurrent(generation, operation)) this.fail(asError(error).message);
+    });
     return promise;
   }
 
@@ -107,8 +115,11 @@ export class TestController {
       return Promise.reject(error);
     }
     this.startedAt = this.now();
-    const promise = this.waitFor('fire', 2_000, 'Firing acknowledgement timed out');
-    void this.adapter.fire().catch((error: unknown) => this.fail(asError(error).message));
+    const generation = this.generation;
+    const { promise, operation } = this.waitFor('fire', 2_000, 'Firing acknowledgement timed out');
+    void this.adapter.fire().catch((error: unknown) => {
+      if (this.isCurrent(generation, operation)) this.fail(asError(error).message);
+    });
     return promise;
   }
 
@@ -206,9 +217,15 @@ export class TestController {
     this.notify();
   }
 
-  private waitFor(kind: PendingOperation['kind'], delayMs: number, message: string): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
+  private waitFor(
+    kind: PendingOperation['kind'],
+    delayMs: number,
+    message: string,
+  ): { promise: Promise<void>; operation: PendingOperation } {
+    let operation!: PendingOperation;
+    const promise = new Promise<void>((resolve, reject) => {
       const pending: PendingOperation = { kind, resolve, reject };
+      operation = pending;
       pending.timer = this.schedule(() => {
         if (this.pending !== pending) return;
         this.pending = undefined;
@@ -217,6 +234,11 @@ export class TestController {
       }, delayMs);
       this.pending = pending;
     });
+    return { promise, operation };
+  }
+
+  private isCurrent(generation: number, operation: PendingOperation): boolean {
+    return this.generation === generation && this.pending === operation;
   }
 
   private replaceFireTimer(delayMs: number): void {
