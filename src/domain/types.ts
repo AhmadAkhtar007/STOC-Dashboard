@@ -19,12 +19,33 @@ export interface TestProfile {
   serialCommand: '1' | '2' | '3';
 }
 
-export interface TestState {
-  status: TestStatus;
-  profileId?: ProfileId;
-  samples: number[];
-  error?: string;
-}
+type UnconfiguredStatus = 'disconnected' | 'connecting' | 'connected';
+type ProfileStatus = 'configured' | 'armed' | 'firing' | 'capturing' | 'complete';
+
+type UnconfiguredState = {
+  [Status in UnconfiguredStatus]: { status: Status; samples: number[] };
+}[UnconfiguredStatus];
+
+type ProfileState = {
+  [Status in ProfileStatus]: { status: Status; profileId: ProfileId; samples: number[] };
+}[ProfileStatus];
+
+type ErrorState =
+  | {
+      status: 'error';
+      resetStatus: 'disconnected' | 'connected';
+      samples: number[];
+      error: string;
+    }
+  | {
+      status: 'error';
+      resetStatus: 'configured';
+      profileId: ProfileId;
+      samples: number[];
+      error: string;
+    };
+
+export type TestState = UnconfiguredState | ProfileState | ErrorState;
 
 export type TestAction =
   | { type: 'CONNECT' }

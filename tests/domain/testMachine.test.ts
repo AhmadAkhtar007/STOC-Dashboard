@@ -110,6 +110,7 @@ describe('test state machine', () => {
 
     expect(failed).toEqual({
       status: 'error',
+      resetStatus: 'configured',
       profileId: 'three-phase',
       samples: [],
       error: 'Device timeout',
@@ -117,13 +118,19 @@ describe('test state machine', () => {
     expect(transition(failed, { type: 'RESET' })).toEqual(configured);
   });
 
-  it('resets an unconfigured error to connected', () => {
+  it('resets a connecting failure to disconnected', () => {
     const failed = transition(
       { status: 'connecting', samples: [] },
       { type: 'FAIL', message: 'Connection failed' },
     );
 
-    expect(transition(failed, { type: 'RESET' })).toEqual({ status: 'connected', samples: [] });
+    expect(transition(failed, { type: 'RESET' })).toEqual(initialTestState);
+  });
+
+  it('resets a disconnected failure to disconnected', () => {
+    const failed = transition(initialTestState, { type: 'FAIL', message: 'Unavailable' });
+
+    expect(transition(failed, { type: 'RESET' })).toEqual(initialTestState);
   });
 
   it('rejects waveform data before capture starts', () => {

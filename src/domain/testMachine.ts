@@ -5,7 +5,11 @@ export const initialTestState: TestState = {
   samples: [],
 };
 
-function requireStatus(state: TestState, expected: TestState['status'], message: string): void {
+function requireStatus<Status extends TestState['status']>(
+  state: TestState,
+  expected: Status,
+  message: string,
+): asserts state is Extract<TestState, { status: Status }> {
   if (state.status !== expected) throw new Error(message);
 }
 
@@ -17,12 +21,37 @@ export function transition(state: TestState, action: TestAction): TestState {
   if (action.type === 'DISCONNECT') return { ...initialTestState, samples: [] };
 
   if (action.type === 'FAIL') {
-    return {
-      status: 'error',
-      ...(state.profileId ? { profileId: state.profileId } : {}),
-      samples: [...state.samples],
-      error: action.message,
-    };
+    switch (state.status) {
+      case 'disconnected':
+      case 'connecting':
+        return {
+          status: 'error',
+          resetStatus: 'disconnected',
+          samples: [...state.samples],
+          error: action.message,
+        };
+      case 'connected':
+        return {
+          status: 'error',
+          resetStatus: 'connected',
+          samples: [...state.samples],
+          error: action.message,
+        };
+      case 'configured':
+      case 'armed':
+      case 'firing':
+      case 'capturing':
+      case 'complete':
+        return {
+          status: 'error',
+          resetStatus: 'configured',
+          profileId: state.profileId,
+          samples: [...state.samples],
+          error: action.message,
+        };
+      case 'error':
+        return { ...state, samples: [...state.samples], error: action.message };
+    }
   }
 
   switch (action.type) {
@@ -53,9 +82,14 @@ export function transition(state: TestState, action: TestAction): TestState {
       return { ...state, status: 'complete', samples: [...action.samples] };
     case 'RESET':
       requireStatus(state, 'error', 'Only an errored test can be reset');
-      return state.profileId
-        ? { status: 'configured', profileId: state.profileId, samples: [] }
-        : { status: 'connected', samples: [] };
+      switch (state.resetStatus) {
+        case 'disconnected':
+          return { ...initialTestState, samples: [] };
+        case 'connected':
+          return { status: 'connected', samples: [] };
+        case 'configured':
+          return { status: 'configured', profileId: state.profileId, samples: [] };
+      }
     default:
       return assertNever(action);
   }
