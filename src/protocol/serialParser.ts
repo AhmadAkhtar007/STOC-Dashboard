@@ -69,11 +69,11 @@ export class SerialParser {
         message: normalizedLine.slice('ERROR:'.length).trim(),
       };
     }
-    if (!line.startsWith('WAVEFORM:')) {
+    if (!normalizedLine.startsWith('WAVEFORM:')) {
       return { type: 'diagnostic', message: normalizedLine };
     }
 
-    const payload = line.slice('WAVEFORM:'.length);
+    const payload = normalizedLine.slice('WAVEFORM:'.length);
     let sampleCount = 1;
     for (const character of payload) {
       if (character === ',') sampleCount += 1;
@@ -86,7 +86,7 @@ export class SerialParser {
       }
     }
 
-    const fields = payload.split(',');
+    const fields = payload.split(',').map((field) => field.trim());
     const samples = fields.map(Number);
     if (
       !payload ||

@@ -42,6 +42,22 @@ describe('SerialParser', () => {
     ]);
   });
 
+  it('parses a waveform line padded with surrounding whitespace', () => {
+    const parser = new SerialParser();
+
+    expect(parser.push('  WAVEFORM:0,512,1023  \n')).toEqual([
+      { type: 'waveform', samples: [0, 512, 1023] },
+    ]);
+  });
+
+  it('accepts whitespace around comma-separated decimal samples', () => {
+    const parser = new SerialParser();
+
+    expect(parser.push('WAVEFORM: 0 , 512 , 1023 \n')).toEqual([
+      { type: 'waveform', samples: [0, 512, 1023] },
+    ]);
+  });
+
   it.each([
     ['empty', 'WAVEFORM:\n'],
     ['empty sample', 'WAVEFORM:1,,2\n'],
