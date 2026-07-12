@@ -60,11 +60,18 @@ export class SimulatorAdapter implements DeviceAdapter {
 
   async selectProfile(profile: TestProfile): Promise<void> {
     if (!this.connected) throw new Error('Simulator is not connected');
-    if (!Object.values(PROFILES).includes(profile)) {
+    const canonical = PROFILES[profile.id];
+    if (
+      !canonical ||
+      canonical.name !== profile.name ||
+      canonical.targetAmps !== profile.targetAmps ||
+      canonical.durationMs !== profile.durationMs ||
+      canonical.serialCommand !== profile.serialCommand
+    ) {
       throw new Error('Unknown simulator profile');
     }
-    this.selectedProfile = profile;
-    this.emit({ type: 'mode-confirmed', profileId: profile.id });
+    this.selectedProfile = canonical;
+    this.emit({ type: 'mode-confirmed', profileId: canonical.id });
   }
 
   async fire(): Promise<void> {
@@ -74,17 +81,18 @@ export class SimulatorAdapter implements DeviceAdapter {
 
     const profile = this.selectedProfile;
     const startedAt = this.now();
-    this.emit({ type: 'firing' });
-
     return new Promise<void>((resolve, reject) => {
       const timerId = this.schedule(() => {
         if (!this.connected || this.pendingFire?.timerId !== timerId) return;
-        this.pendingFire = undefined;
         this.emit({ type: 'fire-complete' });
+        if (!this.connected || this.pendingFire?.timerId !== timerId) return;
         this.emit({ type: 'waveform', samples: createWaveform(profile.id, startedAt) });
+        if (!this.connected || this.pendingFire?.timerId !== timerId) return;
+        this.pendingFire = undefined;
         resolve();
       }, profile.durationMs);
       this.pendingFire = { timerId, reject };
+      this.emit({ type: 'firing' });
     });
   }
 
@@ -94,7 +102,13 @@ export class SimulatorAdapter implements DeviceAdapter {
   }
 
   private emit(event: DeviceEvent): void {
-    for (const listener of this.listeners) listener(event);
+    for (const listener of this.listeners) {
+      try {
+        listener(event);
+      } catch {
+        // A faulty observer must not corrupt the device lifecycle or starve others.
+      }
+    }
   }
 }
 

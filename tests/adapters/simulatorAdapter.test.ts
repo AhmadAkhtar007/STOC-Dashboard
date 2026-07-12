@@ -95,16 +95,96 @@ describe('SimulatorAdapter', () => {
     await firstFire;
   });
 
-  it('selects only exact known profile objects while connected', async () => {
+  it('canonicalizes valid profile copies and rejects tampered profiles', async () => {
     const { adapter } = createAdapter();
 
     await expect(adapter.selectProfile(PROFILES.ltct)).rejects.toThrow(
       'Simulator is not connected',
     );
     await adapter.connect();
+    await expect(adapter.selectProfile({ ...PROFILES.ltct })).resolves.toBeUndefined();
     await expect(
       adapter.selectProfile({ ...PROFILES.ltct, name: 'Impostor' }),
     ).rejects.toThrow('Unknown simulator profile');
+    await expect(
+      adapter.selectProfile({ ...PROFILES.ltct, id: 'unknown' as 'ltct' }),
+    ).rejects.toThrow('Unknown simulator profile');
+  });
+
+  it('establishes the in-flight run before firing observers can reenter', async () => {
+    const { adapter, clock } = createAdapter();
+    let nestedFire: Promise<void> | undefined;
+    adapter.subscribe((event) => {
+      if (event.type === 'firing') nestedFire = adapter.fire();
+    });
+
+    await adapter.connect();
+    await adapter.selectProfile(PROFILES.ltct);
+    const firing = adapter.fire();
+
+    await expect(nestedFire).rejects.toThrow('Simulator is already firing');
+    clock.advanceBy(PROFILES.ltct.durationMs);
+    await expect(firing).resolves.toBeUndefined();
+  });
+
+  it('settles a run when a firing observer disconnects immediately', async () => {
+    const { adapter, clock } = createAdapter();
+    const events: DeviceEvent[] = [];
+    adapter.subscribe((event) => {
+      events.push(event);
+      if (event.type === 'firing') void adapter.disconnect();
+    });
+
+    await adapter.connect();
+    await adapter.selectProfile(PROFILES.ltct);
+    const firing = adapter.fire();
+
+    await expect(firing).rejects.toThrow('Simulator disconnected');
+    clock.advanceBy(PROFILES.ltct.durationMs);
+    expect(events.map((event) => event.type)).toEqual([
+      'connected',
+      'mode-confirmed',
+      'firing',
+      'disconnected',
+    ]);
+  });
+
+  it('isolates observer exceptions and still settles terminal delivery', async () => {
+    const { adapter, clock } = createAdapter();
+    const received: string[] = [];
+    adapter.subscribe((event) => {
+      if (event.type === 'fire-complete' || event.type === 'waveform') {
+        throw new Error(`observer failed on ${event.type}`);
+      }
+    });
+    adapter.subscribe((event) => received.push(event.type));
+
+    await adapter.connect();
+    await adapter.selectProfile(PROFILES['single-phase']);
+    const firing = adapter.fire();
+    clock.advanceBy(PROFILES['single-phase'].durationMs);
+
+    await expect(firing).resolves.toBeUndefined();
+    expect(received.slice(-2)).toEqual(['fire-complete', 'waveform']);
+  });
+
+  it('keeps the run in flight until both terminal events are delivered', async () => {
+    const { adapter, clock } = createAdapter();
+    let nestedFire: Promise<void> | undefined;
+    const events: string[] = [];
+    adapter.subscribe((event) => {
+      events.push(event.type);
+      if (event.type === 'fire-complete') nestedFire = adapter.fire();
+    });
+
+    await adapter.connect();
+    await adapter.selectProfile(PROFILES['single-phase']);
+    const firing = adapter.fire();
+    clock.advanceBy(PROFILES['single-phase'].durationMs);
+
+    await expect(nestedFire).rejects.toThrow('Simulator is already firing');
+    await expect(firing).resolves.toBeUndefined();
+    expect(events.slice(-2)).toEqual(['fire-complete', 'waveform']);
   });
 
   it('creates deterministic, bounded, profile-specific 200-sample waveforms', async () => {
