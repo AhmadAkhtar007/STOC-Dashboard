@@ -60,15 +60,20 @@ export class TestController {
     this.state = transition(this.state, { type: 'CONNECT' });
     this.log('status', 'Connecting');
     this.adapter = adapter;
+    const { promise, operation } = this.waitFor('connect', 3_000, 'Connection timed out');
     const activeAdapter = adapter;
-    this.unsubscribeAdapter = adapter.subscribe((event) => {
+    const unsubscribe = adapter.subscribe((event) => {
       if (this.adapter === activeAdapter) this.handleEvent(event);
     });
+    if (this.generation !== generation || this.adapter !== adapter) {
+      unsubscribe();
+      return promise;
+    }
+    this.unsubscribeAdapter = unsubscribe;
     this.notify();
     if (this.generation !== generation || this.adapter !== adapter) {
-      return Promise.reject(new Error('Connection cancelled'));
+      return promise;
     }
-    const { promise, operation } = this.waitFor('connect', 3_000, 'Connection timed out');
     void adapter.connect(target).catch((error: unknown) => {
       if (this.isCurrent(generation, operation)) this.fail(asError(error).message);
     });

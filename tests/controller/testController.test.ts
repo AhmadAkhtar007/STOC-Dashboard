@@ -353,4 +353,42 @@ describe('TestController', () => {
     expect(snapshot.logs).toContainEqual(expect.objectContaining({ message: 'close failed' }));
     expect(adapter.listeners.size).toBe(0);
   });
+
+  it('owns the connect operation before a connecting subscriber can select a profile', async () => {
+    const adapter = new FakeAdapter();
+    const controller = new TestController();
+    let automaticSelection: Promise<void> | undefined;
+    controller.subscribe((snapshot) => {
+      if (snapshot.state.status === 'connecting') {
+        automaticSelection = controller.selectProfile('single-phase');
+      }
+    });
+
+    const connection = controller.connect(adapter);
+    await expect(automaticSelection).rejects.toThrow(/in progress/i);
+    expect(adapter.selectProfile).not.toHaveBeenCalled();
+    adapter.emit({ type: 'connected', label: 'Atomic' });
+    await connection;
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(controller.getSnapshot().state.status).toBe('connected');
+  });
+
+  it('settles connect when subscribe synchronously replays the connected event', async () => {
+    const adapter = new FakeAdapter();
+    const subscribe = adapter.subscribe.bind(adapter);
+    adapter.subscribe = (listener) => {
+      const unsubscribe = subscribe(listener);
+      listener({ type: 'connected', label: 'Replay' });
+      return unsubscribe;
+    };
+    const controller = new TestController();
+
+    await controller.connect(adapter);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(controller.getSnapshot()).toMatchObject({
+      state: { status: 'connected' },
+      connectionLabel: 'Replay',
+    });
+    expect(adapter.listeners.size).toBe(1);
+  });
 });
