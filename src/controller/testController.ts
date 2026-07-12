@@ -46,6 +46,7 @@ export class TestController {
   private startedAt?: number;
   private pending?: PendingOperation;
   private generation = 0;
+  private requestedProfileId?: ProfileId;
 
   constructor(dependencies: ControllerDependencies = {}) {
     this.now = dependencies.now ?? Date.now;
@@ -56,12 +57,17 @@ export class TestController {
 
   connect(adapter: DeviceAdapter, target?: string): Promise<void> {
     const generation = ++this.generation;
-    this.apply({ type: 'CONNECT' }, 'Connecting');
+    this.state = transition(this.state, { type: 'CONNECT' });
+    this.log('status', 'Connecting');
     this.adapter = adapter;
     const activeAdapter = adapter;
     this.unsubscribeAdapter = adapter.subscribe((event) => {
       if (this.adapter === activeAdapter) this.handleEvent(event);
     });
+    this.notify();
+    if (this.generation !== generation || this.adapter !== adapter) {
+      return Promise.reject(new Error('Connection cancelled'));
+    }
     const { promise, operation } = this.waitFor('connect', 3_000, 'Connection timed out');
     void adapter.connect(target).catch((error: unknown) => {
       if (this.isCurrent(generation, operation)) this.fail(asError(error).message);
@@ -77,6 +83,7 @@ export class TestController {
     this.unsubscribeAdapter = undefined;
     this.adapter = undefined;
     this.selectedProfile = undefined;
+    this.requestedProfileId = undefined;
     this.metadata = undefined;
     this.result = undefined;
     this.connectionLabel = undefined;
@@ -87,8 +94,10 @@ export class TestController {
 
   selectProfile(profileId: ProfileId): Promise<void> {
     if (!this.adapter) return Promise.reject(new Error('Device is not connected'));
+    if (this.pending) return Promise.reject(new Error('Another controller operation is in progress'));
     const profile = PROFILES[profileId];
     const generation = this.generation;
+    this.requestedProfileId = profileId;
     const { promise, operation } = this.waitFor('profile', 2_000, 'Mode confirmation timed out');
     void this.adapter.selectProfile(profile).catch((error: unknown) => {
       if (this.isCurrent(generation, operation)) this.fail(asError(error).message);
@@ -165,10 +174,15 @@ export class TestController {
           this.settle('connect');
           return;
         case 'disconnected':
-          void this.disconnect();
+          void this.disconnect().catch((error: unknown) => this.recordTeardownError(error));
           return;
         case 'mode-confirmed':
           if (this.state.status !== 'connected' || this.pending?.kind !== 'profile') return;
+          if (event.profileId !== this.requestedProfileId) {
+            this.log('diagnostic', `Ignored confirmation for unrequested profile: ${event.profileId}`);
+            this.notify();
+            return;
+          }
           this.selectedProfile = PROFILES[event.profileId];
           this.apply({ type: 'SELECT_PROFILE', profileId: event.profileId }, 'Profile confirmed');
           this.settle('profile');
@@ -229,6 +243,8 @@ export class TestController {
       pending.timer = this.schedule(() => {
         if (this.pending !== pending) return;
         this.pending = undefined;
+        if (kind === 'profile') this.requestedProfileId = undefined;
+        if (kind === 'connect') this.releaseFailedConnection();
         this.fail(message, false);
         reject(new Error(message));
       }, delayMs);
@@ -259,6 +275,7 @@ export class TestController {
     if (!pending || pending.kind !== kind) return;
     this.pending = undefined;
     if (pending.timer !== undefined) this.cancel(pending.timer);
+    if (kind === 'profile') this.requestedProfileId = undefined;
     pending.resolve();
   }
 
@@ -267,12 +284,31 @@ export class TestController {
     this.pending = undefined;
     if (!pending) return;
     if (pending.timer !== undefined) this.cancel(pending.timer);
+    if (pending.kind === 'profile') this.requestedProfileId = undefined;
     pending.reject(error);
   }
 
   private fail(message: string, rejectPending = true): void {
+    const failedKind = this.pending?.kind;
     if (rejectPending) this.clearPending(new Error(message));
+    if (failedKind === 'connect') this.releaseFailedConnection();
     this.apply({ type: 'FAIL', message }, message, 'error');
+  }
+
+  private releaseFailedConnection(): void {
+    const adapter = this.adapter;
+    this.unsubscribeAdapter?.();
+    this.unsubscribeAdapter = undefined;
+    this.adapter = undefined;
+    this.connectionLabel = undefined;
+    if (adapter) {
+      void adapter.disconnect().catch((error: unknown) => this.recordTeardownError(error));
+    }
+  }
+
+  private recordTeardownError(error: unknown): void {
+    this.log('error', asError(error).message);
+    this.notify();
   }
 
   private apply(action: TestAction, message: string, level: ControllerLogEntry['level'] = 'status'): void {

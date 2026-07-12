@@ -278,4 +278,79 @@ describe('TestController', () => {
       error: 'active transport failure',
     });
   });
+
+  it('serializes profile selection and only accepts confirmation for the requested profile', async () => {
+    const { adapter, controller } = await connectedController();
+    const first = controller.selectProfile('single-phase');
+    await expect(controller.selectProfile('ltct')).rejects.toThrow(/in progress/i);
+    expect(adapter.selectProfile).toHaveBeenCalledTimes(1);
+
+    adapter.emit({ type: 'mode-confirmed', profileId: 'ltct' });
+    await Promise.resolve();
+    expect(controller.getSnapshot().state.status).toBe('connected');
+
+    adapter.emit({ type: 'mode-confirmed', profileId: 'single-phase' });
+    await first;
+    expect(controller.getSnapshot().state).toMatchObject({
+      status: 'configured',
+      profileId: 'single-phase',
+    });
+  });
+
+  it('does not create a zombie session when a subscriber disconnects during connecting notification', async () => {
+    const adapter = new FakeAdapter();
+    const controller = new TestController();
+    controller.subscribe((snapshot) => {
+      if (snapshot.state.status === 'connecting') void controller.disconnect();
+    });
+
+    await expect(controller.connect(adapter)).rejects.toThrow(/cancelled|disconnected/i);
+    expect(controller.getSnapshot().state.status).toBe('disconnected');
+    expect(adapter.listeners.size).toBe(0);
+    expect(adapter.connect).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(controller.getSnapshot().state.status).toBe('disconnected');
+  });
+
+  it('releases a failed connection subscription before reset and reconnect', async () => {
+    const first = new FakeAdapter();
+    first.connect.mockRejectedValue(new Error('port unavailable'));
+    const second = new FakeAdapter();
+    const controller = new TestController();
+    await expect(controller.connect(first)).rejects.toThrow('port unavailable');
+    expect(first.listeners.size).toBe(0);
+    controller.reset();
+
+    const connection = controller.connect(second);
+    expect(second.listeners.size).toBe(1);
+    first.emit({ type: 'connected', label: 'Zombie' });
+    second.emit({ type: 'connected', label: 'Current' });
+    await connection;
+    expect(controller.getSnapshot().connectionLabel).toBe('Current');
+    expect(second.listeners.size).toBe(1);
+  });
+
+  it('releases the adapter subscription when connection times out', async () => {
+    const adapter = new FakeAdapter();
+    const controller = new TestController();
+    const connection = controller.connect(adapter);
+    const rejection = expect(connection).rejects.toThrow(/timed out/i);
+    await vi.advanceTimersByTimeAsync(3_000);
+    await rejection;
+    expect(adapter.listeners.size).toBe(0);
+    expect(adapter.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('contains adapter teardown rejection after a disconnected event', async () => {
+    const { adapter, controller } = await connectedController();
+    adapter.disconnect.mockRejectedValue(new Error('close failed'));
+    adapter.emit({ type: 'disconnected' });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const snapshot = controller.getSnapshot();
+    expect(snapshot.state.status).toBe('disconnected');
+    expect(snapshot.logs).toContainEqual(expect.objectContaining({ message: 'close failed' }));
+    expect(adapter.listeners.size).toBe(0);
+  });
 });
