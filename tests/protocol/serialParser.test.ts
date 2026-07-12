@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { SerialParser } from '../../src/protocol/serialParser';
+import {
+  MAX_SERIAL_LINE_LENGTH,
+  MAX_WAVEFORM_SAMPLES,
+  SerialParser,
+} from '../../src/protocol/serialParser';
 
 describe('SerialParser', () => {
   it('reassembles fragmented messages and preserves a trailing partial line', () => {
@@ -51,6 +55,63 @@ describe('SerialParser', () => {
     expect(() => parser.push(line)).not.toThrow();
     expect(new SerialParser().push(line)).toEqual([
       { type: 'protocol-error', message: 'Invalid waveform payload', raw: line.trim() },
+    ]);
+  });
+
+  it.each([
+    ['hexadecimal', '0x10'],
+    ['exponent', '1e2'],
+    ['leading plus', '+1'],
+    ['float', '1.0'],
+    ['blank', ' '],
+  ])('rejects %s waveform tokens outside decimal integer grammar', (_case, token) => {
+    expect(new SerialParser().push(`WAVEFORM:${token}\n`)).toEqual([
+      {
+        type: 'protocol-error',
+        message: 'Invalid waveform payload',
+        raw: `WAVEFORM:${token}`,
+      },
+    ]);
+  });
+
+  it('bounds retained unterminated input and resynchronizes at the next line', () => {
+    const parser = new SerialParser();
+
+    expect(parser.push('x'.repeat(MAX_SERIAL_LINE_LENGTH + 1))).toEqual([
+      {
+        type: 'protocol-error',
+        message: 'Serial line exceeds maximum length',
+        raw: 'x'.repeat(MAX_SERIAL_LINE_LENGTH),
+      },
+    ]);
+    expect(parser.push('discarded remainder\nFIRING\n')).toEqual([{ type: 'firing' }]);
+  });
+
+  it('rejects an oversized terminated line and continues parsing the chunk', () => {
+    const parser = new SerialParser();
+    const oversized = 'x'.repeat(MAX_SERIAL_LINE_LENGTH + 1);
+
+    expect(parser.push(`${oversized}\nFIRE_COMPLETE\n`)).toEqual([
+      {
+        type: 'protocol-error',
+        message: 'Serial line exceeds maximum length',
+        raw: 'x'.repeat(MAX_SERIAL_LINE_LENGTH),
+      },
+      { type: 'fire-complete' },
+    ]);
+  });
+
+  it('bounds waveform sample allocation and parses a later valid line', () => {
+    const parser = new SerialParser();
+    const oversized = Array.from({ length: MAX_WAVEFORM_SAMPLES + 1 }, () => '1').join(',');
+
+    expect(parser.push(`WAVEFORM:${oversized}\nWAVEFORM:0,1023\n`)).toEqual([
+      {
+        type: 'protocol-error',
+        message: 'Waveform exceeds maximum sample count',
+        raw: `WAVEFORM:${oversized}`,
+      },
+      { type: 'waveform', samples: [0, 1023] },
     ]);
   });
 });
