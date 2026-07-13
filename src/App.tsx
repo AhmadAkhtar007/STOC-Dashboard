@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { ElectronSerialAdapter } from './adapters/electronSerialAdapter';
 import { SimulatorAdapter } from './adapters/simulatorAdapter';
 import { ConnectionPanel } from './components/ConnectionPanel';
 import { EventTimeline } from './components/EventTimeline';
@@ -12,10 +13,11 @@ import { TestController } from './controller/testController';
 import type { ControllerSnapshot, DeviceAdapter, ProfileId, RunMetadata } from './domain/types';
 import { downloadFile, resultToCsv, resultToJson } from './storage/exporters';
 import { loadResults, saveResult } from './storage/resultStore';
+import type { SerialPortDescriptor } from './electron';
 
 interface AppProps { adapter?: DeviceAdapter; controller?: TestController; createAdapter?: () => DeviceAdapter; createController?: () => TestController; storage?: Storage }
 export default function App({ adapter: suppliedAdapter, controller: suppliedController, createAdapter, createController, storage = localStorage }: AppProps) {
-  const adapter = useMemo(() => suppliedAdapter ?? createAdapter?.() ?? new SimulatorAdapter(), [suppliedAdapter, createAdapter]);
+  const adapter = useMemo(() => suppliedAdapter ?? createAdapter?.() ?? createDefaultAdapter(), [suppliedAdapter, createAdapter]);
   const controller = useMemo(() => suppliedController ?? createController?.() ?? new TestController(), [suppliedController, createController]);
   const ownsAdapter = suppliedAdapter === undefined;
   const ownsController = suppliedController === undefined;
@@ -23,10 +25,25 @@ export default function App({ adapter: suppliedAdapter, controller: suppliedCont
   const [metadata, setMetadata] = useState<RunMetadata>({});
   const [history, setHistory] = useState(() => loadResults(storage));
   const [uiError, setUiError] = useState<string>();
+  const [ports, setPorts] = useState<SerialPortDescriptor[]>([]);
+  const [selectedPort, setSelectedPort] = useState<string>();
   const [saveError, setSaveError] = useState<string>();
   const [unsavedResult, setUnsavedResult] = useState<ControllerSnapshot['result']>();
   const savedId = useRef<string | undefined>(undefined);
+  const serialAdapter = adapter instanceof ElectronSerialAdapter ? adapter : undefined;
   useEffect(() => controller.subscribe(setSnapshot), [controller]);
+  useEffect(() => {
+    if (!serialAdapter) return;
+    let active = true;
+    void serialAdapter.listPorts().then((availablePorts) => {
+      if (!active) return;
+      setPorts(availablePorts);
+      setSelectedPort((current) => availablePorts.some((port) => port.path === current) ? current : availablePorts[0]?.path);
+    }).catch((error: unknown) => {
+      if (active) setUiError(error instanceof Error ? error.message : String(error));
+    });
+    return () => { active = false; };
+  }, [serialAdapter]);
   useEffect(() => () => {
     if (ownsController) void controller.dispose(ownsAdapter).catch(() => undefined);
     else if (ownsAdapter) {
@@ -75,7 +92,7 @@ export default function App({ adapter: suppliedAdapter, controller: suppliedCont
     {(saveError || uiError || status === 'error') && <div className="error-banner" role="alert"><strong>System exception</strong><span>{saveError ?? uiError ?? ('error' in snapshot.state ? snapshot.state.error : 'Unknown error')}</span>{unsavedResult && <button onClick={retrySave}>Retry save</button>}</div>}
     <main id="main-control" className="dashboard-grid">
       <aside className="setup-column">
-        <ConnectionPanel connected={connected} busy={status === 'connecting' || ['firing', 'capturing'].includes(status)} adapterKind={adapter.kind} connectionLabel={snapshot.connectionLabel} onConnect={() => run(() => controller.connect(adapter))} onDisconnect={() => run(() => controller.disconnect())} />
+        <ConnectionPanel connected={connected} busy={status === 'connecting' || ['firing', 'capturing'].includes(status)} adapterKind={adapter.kind} connectionLabel={snapshot.connectionLabel} ports={serialAdapter ? ports : undefined} selectedPort={selectedPort} onPortChange={setSelectedPort} onConnect={() => run(() => controller.connect(adapter, selectedPort))} onDisconnect={() => run(() => controller.disconnect())} />
         <ProfileSelector value={profileId} disabled={status !== 'connected' && status !== 'configured'} onChange={(id: ProfileId) => run(() => controller.selectProfile(id))} />
         <TestControls status={status} canArm={status === 'configured'} canFire={status === 'armed'} metadata={metadata} onMetadata={setMetadata} onArm={() => { try { controller.arm(metadata); } catch (e) { setUiError(e instanceof Error ? e.message : String(e)); } }} onFire={() => run(() => controller.fire())} />
       </aside>
@@ -88,4 +105,8 @@ export default function App({ adapter: suppliedAdapter, controller: suppliedCont
     </main>
     <footer><span>STOC CONTROL / DEMONSTRATION BUILD</span><span>{adapter.kind === 'simulator' ? 'SIMULATOR OUTPUT' : 'SERIAL INPUT'} IS NOT A CALIBRATED CURRENT MEASUREMENT</span></footer>
   </div>;
+}
+
+function createDefaultAdapter(): DeviceAdapter {
+  return window.stocDesktop ? new ElectronSerialAdapter(window.stocDesktop) : new SimulatorAdapter();
 }
