@@ -4,6 +4,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../../src/App';
 import { SimulatorAdapter } from '../../src/adapters/simulatorAdapter';
 import { TestController } from '../../src/controller/testController';
+import type { DeviceAdapter, DeviceEvent, TestProfile } from '../../src/domain/types';
+
+class SerialDemoAdapter implements DeviceAdapter {
+  readonly kind = 'serial' as const;
+  private readonly listeners = new Set<(event: DeviceEvent) => void>();
+  async connect() { this.emit({ type: 'connected', label: 'Proteus · COM7' }); }
+  async disconnect() { this.emit({ type: 'disconnected' }); }
+  async selectProfile(profile: TestProfile) { this.emit({ type: 'mode-confirmed', profileId: profile.id }); }
+  async fire() { this.emit({ type: 'firing' }); this.emit({ type: 'fire-complete' }); this.emit({ type: 'waveform', samples: [512, 700] }); }
+  subscribe(listener: (event: DeviceEvent) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  private emit(event: DeviceEvent) { this.listeners.forEach(listener => listener(event)); }
+}
 
 function renderDashboard() {
   const adapter = new SimulatorAdapter();
@@ -38,10 +50,13 @@ describe('STOC operator dashboard', () => {
     await act(async () => vi.advanceTimersByTimeAsync(10));
 
     expect(screen.getByRole('status', { name: /test outcome/i })).toHaveTextContent(/sequence complete/i);
-    expect(screen.getByRole('img', { name: /raw adc waveform/i })).toBeInTheDocument();
-    expect(screen.getByText('200 samples')).toBeInTheDocument();
-    expect(screen.getByText(/simulated data/i)).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /raw adc waveform/i })).toHaveAccessibleDescription(/raw adc scale 0 to 1023.*sample index/i);
+    expect(screen.getByRole('status', { name: /waveform sample count/i })).toHaveTextContent('200 samples');
+    expect(screen.getByRole('note', { name: /measurement limitation/i })).toHaveTextContent(/simulated data/i);
+    expect(screen.getByRole('group', { name: /run instrumentation/i })).toHaveTextContent('200');
+    expect(screen.getByRole('group', { name: /run instrumentation/i })).toHaveTextContent(/simulator/i);
     expect(screen.getByRole('list', { name: /test history/i })).toHaveTextContent('MTR-2048');
+    expect(screen.getByRole('list', { name: /test history/i })).toHaveTextContent(/simulator/i);
     expect(screen.getByRole('button', { name: /export json/i })).toBeEnabled();
   }, 10_000);
 
@@ -55,7 +70,7 @@ describe('STOC operator dashboard', () => {
 
     fireEvent.pointerDown(fire);
     await act(async () => vi.advanceTimersByTimeAsync(1_000));
-    expect(screen.getByText(/capturing|firing/i, { selector: '.monitor-strip strong' })).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: /controller state/i })).toHaveTextContent(/capturing|firing/i);
   });
 
   it('offers an explicit keyboard confirmation instead of an inaccessible hold gesture', async () => {
@@ -75,5 +90,13 @@ describe('STOC operator dashboard', () => {
     controller.disconnect = vi.fn(async () => { throw new Error('Transport close failed'); });
     await act(async () => screen.getByRole('button', { name: /^disconnect simulator$/i }).click());
     expect(screen.getByRole('alert')).toHaveTextContent('Transport close failed');
+  });
+
+  it('uses the active adapter identity instead of simulator labels', async () => {
+    render(<App adapter={new SerialDemoAdapter()} controller={new TestController()} />);
+    expect(screen.getByRole('button', { name: /connect proteus/i })).toBeInTheDocument();
+    await act(async () => screen.getByRole('button', { name: /connect proteus/i }).click());
+    expect(screen.getByRole('status', { name: /active adapter/i })).toHaveTextContent('Proteus · COM7');
+    expect(screen.queryByRole('note', { name: /measurement limitation/i })).toHaveTextContent(/serial device data/i);
   });
 });

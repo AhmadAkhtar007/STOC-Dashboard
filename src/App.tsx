@@ -46,17 +46,17 @@ export default function App({ adapter: suppliedAdapter, controller: suppliedCont
     {(uiError || status === 'error') && <div className="error-banner" role="alert"><strong>System exception</strong><span>{uiError ?? ('error' in snapshot.state ? snapshot.state.error : 'Unknown error')}</span></div>}
     <main id="main-control" className="dashboard-grid">
       <aside className="setup-column">
-        <ConnectionPanel connected={connected} busy={status === 'connecting' || ['firing', 'capturing'].includes(status)} onConnect={() => run(() => controller.connect(adapter))} onDisconnect={() => run(() => controller.disconnect())} />
+        <ConnectionPanel connected={connected} busy={status === 'connecting' || ['firing', 'capturing'].includes(status)} adapterKind={adapter.kind} connectionLabel={snapshot.connectionLabel} onConnect={() => run(() => controller.connect(adapter))} onDisconnect={() => run(() => controller.disconnect())} />
         <ProfileSelector value={profileId} disabled={status !== 'connected' && status !== 'configured'} onChange={(id: ProfileId) => run(() => controller.selectProfile(id))} />
         <TestControls status={status} canArm={status === 'configured'} canFire={status === 'armed'} metadata={metadata} onMetadata={setMetadata} onArm={() => { try { controller.arm(metadata); } catch (e) { setUiError(e instanceof Error ? e.message : String(e)); } }} onFire={() => run(() => controller.fire())} />
       </aside>
       <section className="monitor-column" aria-label="Live test monitor">
-        <div className="monitor-strip"><div><span>MODE</span><strong>SIMULATOR</strong></div><div><span>STATE</span><strong className={`text-${status}`}>{status.toUpperCase()}</strong></div><div><span>MEASUREMENT</span><strong>RAW ADC</strong></div><div><span>CALIBRATION</span><strong>NOT APPLIED</strong></div></div>
-        <WaveformChart samples={snapshot.state.samples} />
+        <div className="monitor-strip"><div><span>ADAPTER</span><strong role="status" aria-label="Active adapter">{snapshot.connectionLabel ?? (adapter.kind === 'simulator' ? 'SIMULATOR' : 'SERIAL')}</strong></div><div><span>STATE</span><strong role="status" aria-label="Controller state" className={`text-${status}`}>{status.toUpperCase()}</strong></div><div><span>MEASUREMENT</span><strong>RAW ADC</strong></div><div><span>CALIBRATION</span><strong>NOT APPLIED</strong></div></div>
+        <WaveformChart samples={snapshot.state.samples} simulated={adapter.kind === 'simulator'} />
         <div className="result-row"><ResultSummary result={selected} onJson={() => exportResult('json')} onCsv={() => exportResult('csv')} onPrint={() => window.print()} /><EventTimeline logs={snapshot.logs} /></div>
         <HistoryPanel results={history} />
       </section>
     </main>
-    <footer><span>STOC CONTROL / DEMONSTRATION BUILD</span><span>SIMULATOR OUTPUT IS NOT A CALIBRATED CURRENT MEASUREMENT</span></footer>
+    <footer><span>STOC CONTROL / DEMONSTRATION BUILD</span><span>{adapter.kind === 'simulator' ? 'SIMULATOR OUTPUT' : 'SERIAL INPUT'} IS NOT A CALIBRATED CURRENT MEASUREMENT</span></footer>
   </div>;
 }
