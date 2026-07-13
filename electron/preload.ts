@@ -7,6 +7,7 @@ const channels = {
   writeSerial: 'serial:write',
   serialData: 'serial:data',
   serialError: 'serial:error',
+  serialClose: 'serial:close',
 } as const;
 
 contextBridge.exposeInMainWorld('stocDesktop', {
@@ -27,5 +28,10 @@ contextBridge.exposeInMainWorld('stocDesktop', {
     };
     ipcRenderer.on(channels.serialError, wrapped);
     return () => ipcRenderer.removeListener(channels.serialError, wrapped);
+  },
+  onSerialClose: (listener: () => void) => {
+    const wrapped = () => listener();
+    ipcRenderer.on(channels.serialClose, wrapped);
+    return () => ipcRenderer.removeListener(channels.serialClose, wrapped);
   },
 });

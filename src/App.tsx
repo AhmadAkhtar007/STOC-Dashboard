@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ElectronSerialAdapter } from './adapters/electronSerialAdapter';
 import { SimulatorAdapter } from './adapters/simulatorAdapter';
 import { ConnectionPanel } from './components/ConnectionPanel';
@@ -27,23 +27,38 @@ export default function App({ adapter: suppliedAdapter, controller: suppliedCont
   const [uiError, setUiError] = useState<string>();
   const [ports, setPorts] = useState<SerialPortDescriptor[]>([]);
   const [selectedPort, setSelectedPort] = useState<string>();
+  const [portsLoading, setPortsLoading] = useState(false);
+  const [portError, setPortError] = useState<string>();
   const [saveError, setSaveError] = useState<string>();
   const [unsavedResult, setUnsavedResult] = useState<ControllerSnapshot['result']>();
   const savedId = useRef<string | undefined>(undefined);
+  const portRequest = useRef(0);
   const serialAdapter = adapter instanceof ElectronSerialAdapter ? adapter : undefined;
   useEffect(() => controller.subscribe(setSnapshot), [controller]);
-  useEffect(() => {
+  const refreshPorts = useCallback(async () => {
     if (!serialAdapter) return;
-    let active = true;
-    void serialAdapter.listPorts().then((availablePorts) => {
-      if (!active) return;
+    const request = ++portRequest.current;
+    setPortsLoading(true);
+    setPortError(undefined);
+    try {
+      const availablePorts = await serialAdapter.listPorts();
+      if (request !== portRequest.current) return;
       setPorts(availablePorts);
       setSelectedPort((current) => availablePorts.some((port) => port.path === current) ? current : availablePorts[0]?.path);
-    }).catch((error: unknown) => {
-      if (active) setUiError(error instanceof Error ? error.message : String(error));
-    });
-    return () => { active = false; };
+    } catch (error) {
+      if (request !== portRequest.current) return;
+      setPorts([]);
+      setSelectedPort(undefined);
+      setPortError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (request === portRequest.current) setPortsLoading(false);
+    }
   }, [serialAdapter]);
+  useEffect(() => {
+    if (!serialAdapter) return;
+    void refreshPorts();
+    return () => { portRequest.current += 1; };
+  }, [refreshPorts, serialAdapter]);
   useEffect(() => () => {
     if (ownsController) void controller.dispose(ownsAdapter).catch(() => undefined);
     else if (ownsAdapter) {
@@ -68,6 +83,18 @@ export default function App({ adapter: suppliedAdapter, controller: suppliedCont
   const connected = !['disconnected', 'connecting'].includes(status) && Boolean(snapshot.connectionLabel);
   const profileId = 'profileId' in snapshot.state ? snapshot.state.profileId : undefined;
   const run = (action: () => Promise<void>) => { setUiError(undefined); void action().catch(error => setUiError(error instanceof Error ? error.message : String(error))); };
+  const connectDevice = async () => {
+    try {
+      await controller.connect(adapter, selectedPort);
+    } catch (error) {
+      await refreshPorts();
+      throw error;
+    }
+  };
+  const disconnectDevice = async () => {
+    await controller.disconnect();
+    await refreshPorts();
+  };
   const selected = snapshot.result;
   const retrySave = () => {
     if (!unsavedResult) return;
@@ -92,7 +119,7 @@ export default function App({ adapter: suppliedAdapter, controller: suppliedCont
     {(saveError || uiError || status === 'error') && <div className="error-banner" role="alert"><strong>System exception</strong><span>{saveError ?? uiError ?? ('error' in snapshot.state ? snapshot.state.error : 'Unknown error')}</span>{unsavedResult && <button onClick={retrySave}>Retry save</button>}</div>}
     <main id="main-control" className="dashboard-grid">
       <aside className="setup-column">
-        <ConnectionPanel connected={connected} busy={status === 'connecting' || ['firing', 'capturing'].includes(status)} adapterKind={adapter.kind} connectionLabel={snapshot.connectionLabel} ports={serialAdapter ? ports : undefined} selectedPort={selectedPort} onPortChange={setSelectedPort} onConnect={() => run(() => controller.connect(adapter, selectedPort))} onDisconnect={() => run(() => controller.disconnect())} />
+        <ConnectionPanel connected={connected} busy={status === 'connecting' || ['firing', 'capturing'].includes(status)} adapterKind={adapter.kind} connectionLabel={snapshot.connectionLabel} ports={serialAdapter ? ports : undefined} selectedPort={selectedPort} portsLoading={portsLoading} portError={portError} onPortChange={setSelectedPort} onRefreshPorts={() => { void refreshPorts(); }} onConnect={() => run(connectDevice)} onDisconnect={() => run(disconnectDevice)} />
         <ProfileSelector value={profileId} disabled={status !== 'connected' && status !== 'configured'} onChange={(id: ProfileId) => run(() => controller.selectProfile(id))} />
         <TestControls status={status} canArm={status === 'configured'} canFire={status === 'armed'} metadata={metadata} onMetadata={setMetadata} onArm={() => { try { controller.arm(metadata); } catch (e) { setUiError(e instanceof Error ? e.message : String(e)); } }} onFire={() => run(() => controller.fire())} />
       </aside>

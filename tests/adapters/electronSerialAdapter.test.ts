@@ -15,6 +15,7 @@ class FakeDesktopApi implements StocDesktopApi {
   readonly writeSerial = vi.fn(async (_data: string) => undefined);
   private readonly dataListeners = new Set<(chunk: string) => void>();
   private readonly errorListeners = new Set<(message: string) => void>();
+  private readonly closeListeners = new Set<() => void>();
 
   onSerialData(listener: (chunk: string) => void) {
     this.dataListeners.add(listener);
@@ -26,12 +27,21 @@ class FakeDesktopApi implements StocDesktopApi {
     return () => this.errorListeners.delete(listener);
   }
 
+  onSerialClose(listener: () => void) {
+    this.closeListeners.add(listener);
+    return () => this.closeListeners.delete(listener);
+  }
+
   emitData(chunk: string) {
     for (const listener of this.dataListeners) listener(chunk);
   }
 
   emitError(message: string) {
     for (const listener of this.errorListeners) listener(message);
+  }
+
+  emitClose() {
+    for (const listener of this.closeListeners) listener();
   }
 
   captureDataListeners() {
@@ -43,7 +53,7 @@ class FakeDesktopApi implements StocDesktopApi {
   }
 
   get listenerCounts() {
-    return { data: this.dataListeners.size, error: this.errorListeners.size };
+    return { data: this.dataListeners.size, error: this.errorListeners.size, close: this.closeListeners.size };
   }
 }
 
@@ -74,7 +84,7 @@ describe('ElectronSerialAdapter', () => {
 
     expect(api.openPort).toHaveBeenCalledWith('COM7');
     expect(events).toEqual([{ type: 'connected', label: 'Proteus / Arduino · COM7' }]);
-    expect(api.listenerCounts).toEqual({ data: 1, error: 1 });
+    expect(api.listenerCounts).toEqual({ data: 1, error: 1, close: 1 });
   });
 
   it('requires an explicit serial port target', async () => {
@@ -173,7 +183,7 @@ describe('ElectronSerialAdapter', () => {
     api.emitError('stale');
 
     expect(api.closePort).toHaveBeenCalledOnce();
-    expect(api.listenerCounts).toEqual({ data: 0, error: 0 });
+    expect(api.listenerCounts).toEqual({ data: 0, error: 0, close: 0 });
     expect(events).toEqual([{ type: 'disconnected' }]);
   });
 
@@ -201,7 +211,7 @@ describe('ElectronSerialAdapter', () => {
 
     await expect(adapter.connect('COM7')).rejects.toThrow('Access denied');
 
-    expect(api.listenerCounts).toEqual({ data: 0, error: 0 });
+    expect(api.listenerCounts).toEqual({ data: 0, error: 0, close: 0 });
     expect(api.closePort).not.toHaveBeenCalled();
   });
 
@@ -236,5 +246,34 @@ describe('ElectronSerialAdapter', () => {
       type: 'connected',
       label: 'Proteus / Arduino · COM7',
     });
+  });
+
+  it('reports a physical unplug and transitions the connected session to disconnected', async () => {
+    const api = new FakeDesktopApi();
+    const adapter = new ElectronSerialAdapter(api);
+    const events = recordEvents(adapter);
+    await adapter.connect('COM7');
+    events.length = 0;
+
+    api.emitClose();
+
+    expect(events).toEqual([
+      { type: 'error', message: 'Serial port disconnected unexpectedly' },
+      { type: 'disconnected' },
+    ]);
+    expect(api.listenerCounts).toEqual({ data: 0, error: 0, close: 0 });
+    await expect(adapter.fire()).rejects.toThrow('not connected');
+  });
+
+  it('rejects an in-flight fire command when the serial device is unplugged', async () => {
+    const api = new FakeDesktopApi();
+    api.writeSerial.mockImplementationOnce(() => new Promise<void>(() => undefined));
+    const adapter = new ElectronSerialAdapter(api);
+    await adapter.connect('COM7');
+
+    const firing = adapter.fire();
+    api.emitClose();
+
+    await expect(firing).rejects.toThrow('Serial port disconnected unexpectedly');
   });
 });

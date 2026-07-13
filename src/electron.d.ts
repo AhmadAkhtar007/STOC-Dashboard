@@ -10,6 +10,7 @@ export interface StocDesktopApi {
   writeSerial(data: string): Promise<void>;
   onSerialData(listener: (chunk: string) => void): () => void;
   onSerialError(listener: (message: string) => void): () => void;
+  onSerialClose(listener: () => void): () => void;
 }
 
 declare global {
@@ -17,4 +18,3 @@ declare global {
     stocDesktop?: StocDesktopApi;
   }
 }
-

@@ -28,6 +28,8 @@ export class ElectronSerialAdapter implements DeviceAdapter {
   private generation = 0;
   private removeDataListener?: () => void;
   private removeErrorListener?: () => void;
+  private removeCloseListener?: () => void;
+  private readonly pendingWrites = new Set<(error: Error) => void>();
 
   constructor(private readonly api: StocDesktopApi = requireDesktopApi()) {}
 
@@ -48,8 +50,7 @@ export class ElectronSerialAdapter implements DeviceAdapter {
     try {
       await this.api.openPort(path);
       if (generation !== this.generation) {
-        await this.api.closePort();
-        return;
+        throw new Error('Serial connection interrupted');
       }
       this.connecting = false;
       this.connected = true;
@@ -65,13 +66,14 @@ export class ElectronSerialAdapter implements DeviceAdapter {
   }
 
   async disconnect(): Promise<void> {
-    const wasConnected = this.connected;
+    const wasActive = this.connected || this.connecting;
     this.connecting = false;
     this.connected = false;
     this.generation += 1;
     this.removeTransportListeners();
     this.parser = new SerialParser();
-    if (!wasConnected) return;
+    this.rejectPendingWrites(new Error('Serial port disconnected'));
+    if (!wasActive) return;
     try {
       await this.api.closePort();
     } finally {
@@ -83,12 +85,12 @@ export class ElectronSerialAdapter implements DeviceAdapter {
     this.assertConnected();
     const canonical = PROFILES[profile.id];
     if (!canonical) throw new Error('Unknown serial profile');
-    await this.api.writeSerial(canonical.serialCommand);
+    await this.write(canonical.serialCommand);
   }
 
   async fire(): Promise<void> {
     this.assertConnected();
-    await this.api.writeSerial('F');
+    await this.write('F');
   }
 
   subscribe(listener: (event: DeviceEvent) => void): () => void {
@@ -109,13 +111,44 @@ export class ElectronSerialAdapter implements DeviceAdapter {
       if (generation !== this.generation) return;
       this.emit({ type: 'error', message });
     });
+    this.removeCloseListener = this.api.onSerialClose(() => {
+      if (generation !== this.generation) return;
+      const error = new Error('Serial port disconnected unexpectedly');
+      this.connected = false;
+      this.connecting = false;
+      this.generation += 1;
+      this.removeTransportListeners();
+      this.parser = new SerialParser();
+      this.rejectPendingWrites(error);
+      this.emit({ type: 'error', message: error.message });
+      this.emit({ type: 'disconnected' });
+    });
   }
 
   private removeTransportListeners(): void {
     this.removeDataListener?.();
     this.removeErrorListener?.();
+    this.removeCloseListener?.();
     this.removeDataListener = undefined;
     this.removeErrorListener = undefined;
+    this.removeCloseListener = undefined;
+  }
+
+  private write(data: string): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const rejectPending = (error: Error) => reject(error);
+      this.pendingWrites.add(rejectPending);
+      void this.api.writeSerial(data).then(
+        () => { this.pendingWrites.delete(rejectPending); resolve(); },
+        (error: unknown) => { this.pendingWrites.delete(rejectPending); reject(asError(error)); },
+      );
+    });
+  }
+
+  private rejectPendingWrites(error: Error): void {
+    const pending = [...this.pendingWrites];
+    this.pendingWrites.clear();
+    for (const reject of pending) reject(error);
   }
 
   private assertConnected(): void {

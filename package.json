@@ -2,7 +2,9 @@
   "name": "stoc-dashboard",
   "productName": "STOC Energy Meter Test System",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "Professional STOC energy meter test dashboard for simulation, Proteus, and Arduino serial control.",
+  "author": "Ahmad Akhtar",
   "type": "module",
   "main": "dist-electron/main.js",
   "engines": {
@@ -24,6 +26,7 @@
   "build": {
     "appId": "com.stoc.energy-meter-dashboard",
     "productName": "STOC Energy Meter Test System",
+    "npmRebuild": false,
     "directories": {
       "output": "release"
     },
