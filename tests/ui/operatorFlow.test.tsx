@@ -120,6 +120,8 @@ describe('STOC operator dashboard', () => {
     await act(async () => vi.advanceTimersByTimeAsync(10));
     expect(screen.getByRole('alert')).toHaveTextContent(/could not be saved/i);
     expect(screen.getByRole('button', { name: /retry save/i })).toBeInTheDocument();
+    await act(async () => screen.getByRole('button', { name: /disconnect simulator/i }).click());
+    expect(screen.getByRole('button', { name: /retry save/i })).toBeInTheDocument();
     throwing = false;
     await act(async () => screen.getByRole('button', { name: /retry save/i }).click());
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();

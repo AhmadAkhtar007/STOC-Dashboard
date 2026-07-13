@@ -5,7 +5,9 @@ interface Props { status: TestStatus; canArm: boolean; canFire: boolean; metadat
 export function TestControls({ status, canArm, canFire, metadata, onMetadata, onArm, onFire }: Props) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const wasConfirming = useRef(false);
   const pointerId = useRef<number | undefined>(undefined);
   const [holding, setHolding] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -29,7 +31,8 @@ export function TestControls({ status, canArm, canFire, metadata, onMetadata, on
   }, [canFire]);
   useEffect(() => {
     if (confirming) confirmRef.current?.focus();
-    else triggerRef.current?.focus();
+    else if (wasConfirming.current) triggerRef.current?.focus();
+    wasConfirming.current = confirming;
   }, [confirming]);
   const beginHold = (event: React.PointerEvent<HTMLButtonElement>) => {
     if (!canFire || timer.current) return;
@@ -51,9 +54,18 @@ export function TestControls({ status, canArm, canFire, metadata, onMetadata, on
       <span className="hold-fill" aria-hidden="true" /><span>{holding ? 'Keep holding — 1 second required' : 'Hold to fire — 1 second'}</span>
     </button>
     <p className="safety-copy">Pointer: hold continuously. Keyboard: press Enter or Space, then confirm.</p>
-    {confirming && <div className="dialog-backdrop"><div role="dialog" aria-modal="true" aria-labelledby="confirm-title" className="confirm-dialog" onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); setConfirming(false); } }}>
+    {confirming && <div className="dialog-backdrop"><div role="dialog" aria-modal="true" aria-labelledby="confirm-title" className="confirm-dialog" onKeyDown={e => {
+      if (e.key === 'Escape') { e.preventDefault(); setConfirming(false); return; }
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const focusables = [cancelRef.current, confirmRef.current].filter((item): item is HTMLButtonElement => item !== null);
+        const current = focusables.indexOf(document.activeElement as HTMLButtonElement);
+        const next = e.shiftKey ? (current <= 0 ? focusables.length - 1 : current - 1) : (current + 1) % focusables.length;
+        focusables[next]?.focus();
+      }
+    }}>
       <p className="eyebrow">Final authorization</p><h3 id="confirm-title">Confirm test firing</h3><p>This starts the selected test sequence. Controls lock until capture completes.</p>
-      <div><button className="secondary-button" onClick={() => setConfirming(false)}>Cancel</button><button ref={confirmRef} className="confirm-fire" onClick={() => { if (!canFire) return; setConfirming(false); onFire(); }}>Confirm fire</button></div>
+      <div><button ref={cancelRef} className="secondary-button" onClick={() => setConfirming(false)}>Cancel</button><button ref={confirmRef} className="confirm-fire" onClick={() => { if (!canFire) return; setConfirming(false); onFire(); }}>Confirm fire</button></div>
     </div></div>}
   </section>;
 }

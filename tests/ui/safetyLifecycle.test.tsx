@@ -79,6 +79,47 @@ describe('dashboard safety lifecycle', () => {
     expect(injected.disconnect).not.toHaveBeenCalled();
   });
 
+  it('tracks partial adapter and controller ownership independently', async () => {
+    const externalController = new TestController();
+    const externalDisconnect = vi.spyOn(externalController, 'disconnect');
+    const ownedAdapter = new SimulatorAdapter();
+    const ownedAdapterDisconnect = vi.spyOn(ownedAdapter, 'disconnect');
+    const first = render(<App controller={externalController} createAdapter={() => ownedAdapter} />);
+    await act(async () => screen.getByRole('button', { name: /connect simulator/i }).click());
+    first.unmount();
+    await act(async () => Promise.resolve());
+    expect(ownedAdapterDisconnect).toHaveBeenCalledOnce();
+    expect(externalDisconnect).not.toHaveBeenCalled();
+
+    const externalAdapter = new SerialAdapter();
+    const ownedController = new TestController();
+    const dispose = vi.spyOn(ownedController, 'dispose');
+    const second = render(<App adapter={externalAdapter} createController={() => ownedController} />);
+    await act(async () => screen.getByRole('button', { name: /connect proteus/i }).click());
+    second.unmount();
+    await act(async () => Promise.resolve());
+    expect(dispose).toHaveBeenCalledWith(false);
+    expect(externalAdapter.disconnect).not.toHaveBeenCalled();
+  });
+
+  it('does not steal focus on mount and traps focus while confirmation is open', () => {
+    const before = document.createElement('button');
+    document.body.append(before);
+    before.focus();
+    const { trigger } = renderControls();
+    expect(before).toHaveFocus();
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: 'Enter' });
+    const confirm = screen.getByRole('button', { name: /confirm fire/i });
+    const cancel = screen.getByRole('button', { name: /^cancel$/i });
+    expect(confirm).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Tab' });
+    expect(cancel).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Tab', shiftKey: true });
+    expect(confirm).toHaveFocus();
+    before.remove();
+  });
+
   it('uses neutral safety copy for a serial test sequence', async () => {
     const { trigger } = renderControls();
     fireEvent.keyDown(trigger, { key: 'Enter' });

@@ -152,6 +152,31 @@ export class TestController {
     return () => this.listeners.delete(listener);
   }
 
+  detachAdapter(adapter: DeviceAdapter): void {
+    if (this.adapter !== adapter) return;
+    this.generation += 1;
+    this.clearPending(new Error('Controller disposed'));
+    this.unsubscribeAdapter?.();
+    this.unsubscribeAdapter = undefined;
+    this.adapter = undefined;
+    this.selectedProfile = undefined;
+    this.requestedProfileId = undefined;
+    this.metadata = undefined;
+    this.result = undefined;
+    this.connectionLabel = undefined;
+    this.startedAt = undefined;
+    this.state = transition(this.state, { type: 'DISCONNECT' });
+    this.notify();
+  }
+
+  async dispose(disconnectAdapter = true): Promise<void> {
+    const adapter = this.adapter;
+    if (adapter) this.detachAdapter(adapter);
+    else this.clearPending(new Error('Controller disposed'));
+    this.listeners.clear();
+    if (disconnectAdapter && adapter) await adapter.disconnect();
+  }
+
   getSnapshot(): ControllerSnapshot {
     return {
       state: { ...this.state, samples: [...this.state.samples] },
