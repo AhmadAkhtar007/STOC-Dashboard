@@ -13,21 +13,32 @@ import type { ControllerSnapshot, DeviceAdapter, ProfileId, RunMetadata } from '
 import { downloadFile, resultToCsv, resultToJson } from './storage/exporters';
 import { loadResults, saveResult } from './storage/resultStore';
 
-interface AppProps { adapter?: DeviceAdapter; controller?: TestController }
-export default function App({ adapter: suppliedAdapter, controller: suppliedController }: AppProps) {
-  const adapter = useMemo(() => suppliedAdapter ?? new SimulatorAdapter(), [suppliedAdapter]);
-  const controller = useMemo(() => suppliedController ?? new TestController(), [suppliedController]);
+interface AppProps { adapter?: DeviceAdapter; controller?: TestController; createAdapter?: () => DeviceAdapter; createController?: () => TestController; storage?: Storage }
+export default function App({ adapter: suppliedAdapter, controller: suppliedController, createAdapter, createController, storage = localStorage }: AppProps) {
+  const adapter = useMemo(() => suppliedAdapter ?? createAdapter?.() ?? new SimulatorAdapter(), [suppliedAdapter, createAdapter]);
+  const controller = useMemo(() => suppliedController ?? createController?.() ?? new TestController(), [suppliedController, createController]);
+  const ownsCollaborators = suppliedAdapter === undefined && suppliedController === undefined;
   const [snapshot, setSnapshot] = useState<ControllerSnapshot>(() => controller.getSnapshot());
   const [metadata, setMetadata] = useState<RunMetadata>({});
-  const [history, setHistory] = useState(() => loadResults());
+  const [history, setHistory] = useState(() => loadResults(storage));
   const [uiError, setUiError] = useState<string>();
+  const [saveAttempt, setSaveAttempt] = useState(0);
+  const [unsaved, setUnsaved] = useState(false);
   const savedId = useRef<string | undefined>(undefined);
   useEffect(() => controller.subscribe(setSnapshot), [controller]);
+  useEffect(() => () => { if (ownsCollaborators) void controller.disconnect().catch(() => undefined); }, [controller, ownsCollaborators]);
   useEffect(() => {
     if (!snapshot.result || savedId.current === snapshot.result.id) return;
-    savedId.current = snapshot.result.id;
-    try { setHistory(saveResult(snapshot.result)); } catch (error) { setUiError(error instanceof Error ? error.message : String(error)); }
-  }, [snapshot.result]);
+    try {
+      setHistory(saveResult(snapshot.result, storage));
+      savedId.current = snapshot.result.id;
+      setUnsaved(false);
+      setUiError(undefined);
+    } catch (error) {
+      setUnsaved(true);
+      setUiError(error instanceof Error ? error.message : String(error));
+    }
+  }, [snapshot.result, storage, saveAttempt]);
 
   const status = snapshot.state.status;
   const connected = !['disconnected', 'connecting'].includes(status) && Boolean(snapshot.connectionLabel);
@@ -43,7 +54,7 @@ export default function App({ adapter: suppliedAdapter, controller: suppliedCont
   return <div className="app-shell">
     <a className="skip-link" href="#main-control">Skip to test controls</a>
     <SystemHeader status={status} label={snapshot.connectionLabel} />
-    {(uiError || status === 'error') && <div className="error-banner" role="alert"><strong>System exception</strong><span>{uiError ?? ('error' in snapshot.state ? snapshot.state.error : 'Unknown error')}</span></div>}
+    {(uiError || status === 'error') && <div className="error-banner" role="alert"><strong>System exception</strong><span>{uiError ?? ('error' in snapshot.state ? snapshot.state.error : 'Unknown error')}</span>{unsaved && <button onClick={() => setSaveAttempt(value => value + 1)}>Retry save</button>}</div>}
     <main id="main-control" className="dashboard-grid">
       <aside className="setup-column">
         <ConnectionPanel connected={connected} busy={status === 'connecting' || ['firing', 'capturing'].includes(status)} adapterKind={adapter.kind} connectionLabel={snapshot.connectionLabel} onConnect={() => run(() => controller.connect(adapter))} onDisconnect={() => run(() => controller.disconnect())} />

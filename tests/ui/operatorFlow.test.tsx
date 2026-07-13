@@ -99,4 +99,30 @@ describe('STOC operator dashboard', () => {
     expect(screen.getByRole('status', { name: /active adapter/i })).toHaveTextContent('Proteus · COM7');
     expect(screen.queryByRole('note', { name: /measurement limitation/i })).toHaveTextContent(/serial device data/i);
   });
+
+  it('keeps a failed result unsaved and retries persistence explicitly', async () => {
+    let throwing = true;
+    const values = new Map<string, string>();
+    const storage: Storage = {
+      get length() { return values.size; },
+      clear: () => values.clear(),
+      getItem: key => values.get(key) ?? null,
+      key: index => [...values.keys()][index] ?? null,
+      removeItem: key => { values.delete(key); },
+      setItem: (key, value) => { if (throwing) throw new Error('Storage unavailable'); values.set(key, value); },
+    };
+    render(<App adapter={new SimulatorAdapter()} controller={new TestController({ createId: () => 'retry-run' })} storage={storage} />);
+    await act(async () => screen.getByRole('button', { name: /connect simulator/i }).click());
+    await act(async () => screen.getByRole('radio', { name: /single phase/i }).click());
+    await act(async () => screen.getByRole('button', { name: /arm test/i }).click());
+    fireEvent.keyDown(screen.getByRole('button', { name: /hold to fire/i }), { key: 'Enter' });
+    screen.getByRole('button', { name: /confirm fire/i }).click();
+    await act(async () => vi.advanceTimersByTimeAsync(10));
+    expect(screen.getByRole('alert')).toHaveTextContent(/could not be saved/i);
+    expect(screen.getByRole('button', { name: /retry save/i })).toBeInTheDocument();
+    throwing = false;
+    await act(async () => screen.getByRole('button', { name: /retry save/i }).click());
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(values.size).toBe(1);
+  });
 });
