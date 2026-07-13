@@ -51,8 +51,8 @@ export class TestController {
   constructor(dependencies: ControllerDependencies = {}) {
     this.now = dependencies.now ?? Date.now;
     this.createId = dependencies.createId ?? (() => globalThis.crypto.randomUUID());
-    this.schedule = dependencies.setTimeout ?? globalThis.setTimeout;
-    this.cancel = dependencies.clearTimeout ?? globalThis.clearTimeout;
+    this.schedule = dependencies.setTimeout ?? ((callback, delayMs) => globalThis.setTimeout(callback, delayMs));
+    this.cancel = dependencies.clearTimeout ?? ((timerId) => globalThis.clearTimeout(timerId));
   }
 
   connect(adapter: DeviceAdapter, target?: string): Promise<void> {

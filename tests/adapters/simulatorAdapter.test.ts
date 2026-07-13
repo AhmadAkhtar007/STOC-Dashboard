@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { PROFILES } from '../../src/domain/profiles';
 import type { DeviceEvent } from '../../src/domain/types';
@@ -51,6 +51,40 @@ function createAdapter() {
 }
 
 describe('SimulatorAdapter', () => {
+  it('invokes default browser timer dependencies with the global receiver', async () => {
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalClearTimeout = globalThis.clearTimeout;
+    const receiverSensitiveSetTimeout = vi.fn(function (
+      this: unknown,
+      _callback: () => void,
+      _delayMs?: number,
+    ) {
+      if (this !== globalThis) throw new TypeError('Illegal invocation');
+      return 73 as ReturnType<typeof globalThis.setTimeout>;
+    });
+    const receiverSensitiveClearTimeout = vi.fn(function (this: unknown, _timerId: unknown) {
+      if (this !== globalThis) throw new TypeError('Illegal invocation');
+    });
+    globalThis.setTimeout = receiverSensitiveSetTimeout as typeof globalThis.setTimeout;
+    globalThis.clearTimeout = receiverSensitiveClearTimeout as typeof globalThis.clearTimeout;
+
+    try {
+      const adapter = new SimulatorAdapter();
+      await adapter.connect();
+      await adapter.selectProfile(PROFILES['single-phase']);
+      const firing = adapter.fire();
+      const settlement = expect(firing).rejects.toThrow('Simulator disconnected');
+      await adapter.disconnect();
+
+      await settlement;
+      expect(receiverSensitiveSetTimeout).toHaveBeenCalledOnce();
+      expect(receiverSensitiveClearTimeout).toHaveBeenCalledWith(73);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    }
+  });
+
   it('identifies itself and emits the complete run in protocol order', async () => {
     const { adapter, clock } = createAdapter();
     const events: DeviceEvent[] = [];

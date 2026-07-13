@@ -33,8 +33,8 @@ export class SimulatorAdapter implements DeviceAdapter {
 
   constructor(dependencies: SimulatorDependencies = {}) {
     this.now = dependencies.now ?? Date.now;
-    this.schedule = dependencies.setTimeout ?? globalThis.setTimeout;
-    this.cancel = dependencies.clearTimeout ?? globalThis.clearTimeout;
+    this.schedule = dependencies.setTimeout ?? ((callback, delayMs) => globalThis.setTimeout(callback, delayMs));
+    this.cancel = dependencies.clearTimeout ?? ((timerId) => globalThis.clearTimeout(timerId));
   }
 
   async connect(_target?: string): Promise<void> {

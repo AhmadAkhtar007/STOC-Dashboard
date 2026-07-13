@@ -62,6 +62,38 @@ describe('TestController', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
+  it('invokes default browser timer dependencies with the global receiver', async () => {
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalClearTimeout = globalThis.clearTimeout;
+    const receiverSensitiveSetTimeout = vi.fn(function (
+      this: unknown,
+      _callback: () => void,
+      _delayMs?: number,
+    ) {
+      if (this !== globalThis) throw new TypeError('Illegal invocation');
+      return 41 as ReturnType<typeof globalThis.setTimeout>;
+    });
+    const receiverSensitiveClearTimeout = vi.fn(function (this: unknown, _timerId: unknown) {
+      if (this !== globalThis) throw new TypeError('Illegal invocation');
+    });
+    globalThis.setTimeout = receiverSensitiveSetTimeout as typeof globalThis.setTimeout;
+    globalThis.clearTimeout = receiverSensitiveClearTimeout as typeof globalThis.clearTimeout;
+
+    try {
+      const adapter = new FakeAdapter();
+      const controller = new TestController();
+      const connecting = controller.connect(adapter);
+      adapter.emit({ type: 'connected', label: 'Receiver-safe' });
+
+      await expect(connecting).resolves.toBeUndefined();
+      expect(receiverSensitiveSetTimeout).toHaveBeenCalledOnce();
+      expect(receiverSensitiveClearTimeout).toHaveBeenCalledWith(41);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    }
+  });
+
   it('completes a run and creates a raw sequence result with defensive sample copies', async () => {
     const { adapter, controller } = await configuredController();
     const snapshots: string[] = [];
