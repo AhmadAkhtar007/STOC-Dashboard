@@ -111,7 +111,9 @@ async function createWindow(): Promise<void> {
   window.webContents.on('will-navigate', preventUntrustedNavigation);
   window.webContents.on('will-redirect', preventUntrustedNavigation);
   window.once('ready-to-show', () => window.show());
-  window.on('close', () => { void serialManager.shutdown(); });
+  window.on('close', () => {
+    void serialManager.close().catch((error: unknown) => console.error('Failed to close serial port', error));
+  });
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = undefined;
   });

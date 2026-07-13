@@ -44,6 +44,7 @@ export class SerialPortManager {
   private shuttingDown = false;
   private readonly expectedClosures = new WeakSet<ManagedSerialPort>();
   private readonly listeners = new WeakMap<ManagedSerialPort, PortListeners>();
+  private readonly pendingNativeOperations = new WeakMap<ManagedSerialPort, Set<(error: Error) => void>>();
 
   constructor(private readonly dependencies: SerialPortManagerDependencies) {}
 
@@ -60,24 +61,24 @@ export class SerialPortManager {
       if (this.shuttingDown) throw new Error('Serial manager is shutting down');
       if (this.lifecycleState !== 'closed') throw new Error('A serial port is already open or opening');
       this.lifecycleState = 'opening';
-      const availablePorts = await this.dependencies.listPorts();
-      if (!availablePorts.some((port) => port.path === path)) {
-        this.lifecycleState = 'closed';
-        throw new Error('Selected serial port is unavailable');
-      }
-
-      const port = this.dependencies.createPort({
-        path,
-        baudRate: 9600,
-        dataBits: 8,
-        stopBits: 1,
-        parity: 'none',
-        autoOpen: false,
-      });
-      this.currentPort = port;
-      this.attach(port);
+      let port: ManagedSerialPort | undefined;
       try {
-        await callbackOperation((done) => port.open(done));
+        const availablePorts = await this.dependencies.listPorts();
+        if (!availablePorts.some((availablePort) => availablePort.path === path)) {
+          throw new Error('Selected serial port is unavailable');
+        }
+
+        port = this.dependencies.createPort({
+          path,
+          baudRate: 9600,
+          dataBits: 8,
+          stopBits: 1,
+          parity: 'none',
+          autoOpen: false,
+        });
+        this.currentPort = port;
+        this.attach(port);
+        await this.runNativeOperation(port, 'Serial port closed while opening', (done) => port!.open(done));
         if (this.shuttingDown) {
           await this.closeSpecific(port);
           throw new Error('Serial manager is shutting down');
@@ -87,11 +88,11 @@ export class SerialPortManager {
         }
         this.lifecycleState = 'open';
       } catch (error) {
-        if (this.currentPort === port) {
+        if (port && this.currentPort === port) {
           this.currentPort = undefined;
           this.detach(port);
-          this.lifecycleState = 'closed';
         }
+        if (!this.currentPort) this.lifecycleState = 'closed';
         throw error;
       }
     });
@@ -107,9 +108,9 @@ export class SerialPortManager {
       if (this.lifecycleState !== 'open' || !port?.isOpen) {
         throw new Error('Cannot write without an open serial port');
       }
-      await callbackOperation((done) => port.write(data, done));
+      await this.runNativeOperation(port, 'Serial port disconnected during write', (done) => port.write(data, done));
       if (this.currentPort !== port || !port.isOpen) throw new Error('Serial port disconnected during write');
-      await callbackOperation((done) => port.drain(done));
+      await this.runNativeOperation(port, 'Serial port disconnected during write', (done) => port.drain(done));
     });
   }
 
@@ -136,14 +137,20 @@ export class SerialPortManager {
 
   private async closeSpecific(port: ManagedSerialPort): Promise<void> {
     this.expectedClosures.add(port);
+    let closeError: unknown;
     try {
       if (port.isOpen) await callbackOperation((done) => port.close(done));
-    } finally {
-      if (this.currentPort === port) this.currentPort = undefined;
-      this.detach(port);
-      this.expectedClosures.delete(port);
-      if (!this.currentPort) this.lifecycleState = 'closed';
+    } catch (error) {
+      closeError = error;
     }
+    this.expectedClosures.delete(port);
+    if (this.currentPort === port && port.isOpen) {
+      this.lifecycleState = 'open';
+      throw closeError;
+    }
+    if (this.currentPort === port) this.currentPort = undefined;
+    this.detach(port);
+    if (!this.currentPort) this.lifecycleState = 'closed';
   }
 
   private attach(port: ManagedSerialPort): void {
@@ -159,6 +166,7 @@ export class SerialPortManager {
       close: () => {
         const expected = this.expectedClosures.has(port);
         if (this.currentPort !== port) return;
+        this.abortNativeOperations(port, new Error('Serial port disconnected during write'));
         this.currentPort = undefined;
         this.lifecycleState = 'closed';
         this.detach(port);
@@ -178,6 +186,39 @@ export class SerialPortManager {
     port.removeListener('error', listeners.error);
     port.removeListener('close', listeners.close);
     this.listeners.delete(port);
+  }
+
+  private runNativeOperation(
+    port: ManagedSerialPort,
+    disconnectedMessage: string,
+    start: (done: (error?: Error | null) => void) => void,
+  ): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const settle = (error?: Error | null) => {
+        if (settled) return;
+        settled = true;
+        pending.delete(abort);
+        if (error) reject(error);
+        else resolve();
+      };
+      const abort = () => settle(new Error(disconnectedMessage));
+      const pending = this.pendingNativeOperations.get(port) ?? new Set<(error: Error) => void>();
+      this.pendingNativeOperations.set(port, pending);
+      pending.add(abort);
+      try {
+        start(settle);
+      } catch (error) {
+        settle(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+
+  private abortNativeOperations(port: ManagedSerialPort, error: Error): void {
+    const pending = this.pendingNativeOperations.get(port);
+    if (!pending) return;
+    for (const abort of [...pending]) abort(error);
+    this.pendingNativeOperations.delete(port);
   }
 }
 

@@ -386,6 +386,18 @@ describe('TestController', () => {
     expect(adapter.listeners.size).toBe(0);
   });
 
+  it('keeps a manually disconnected session active when native close fails', async () => {
+    const { adapter, controller } = await connectedController();
+    adapter.disconnect.mockRejectedValueOnce(new Error('close failed'));
+
+    await expect(controller.disconnect()).rejects.toThrow('close failed');
+
+    expect(controller.getSnapshot().state.status).toBe('connected');
+    expect(adapter.listeners.size).toBe(1);
+    await expect(controller.disconnect()).resolves.toBeUndefined();
+    expect(controller.getSnapshot().state.status).toBe('disconnected');
+  });
+
   it('owns the connect operation before a connecting subscriber can select a profile', async () => {
     const adapter = new FakeAdapter();
     const controller = new TestController();

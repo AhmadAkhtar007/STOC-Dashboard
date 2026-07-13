@@ -187,6 +187,23 @@ describe('ElectronSerialAdapter', () => {
     expect(events).toEqual([{ type: 'disconnected' }]);
   });
 
+  it('remains connected when closing the native port fails and permits cleanup retry', async () => {
+    const api = new FakeDesktopApi();
+    const adapter = new ElectronSerialAdapter(api);
+    const events = recordEvents(adapter);
+    await adapter.connect('COM7');
+    events.length = 0;
+    api.closePort.mockRejectedValueOnce(new Error('Close failed'));
+
+    await expect(adapter.disconnect()).rejects.toThrow('Close failed');
+
+    expect(events).toEqual([]);
+    expect(api.listenerCounts).toEqual({ data: 1, error: 1, close: 1 });
+    await expect(adapter.fire()).resolves.toBeUndefined();
+    await expect(adapter.disconnect()).resolves.toBeUndefined();
+    expect(events).toEqual([{ type: 'disconnected' }]);
+  });
+
   it('ignores callbacks retained from an earlier connection session', async () => {
     const api = new FakeDesktopApi();
     const adapter = new ElectronSerialAdapter(api);

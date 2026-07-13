@@ -67,18 +67,15 @@ export class ElectronSerialAdapter implements DeviceAdapter {
 
   async disconnect(): Promise<void> {
     const wasActive = this.connected || this.connecting;
+    if (!wasActive) return;
+    await this.api.closePort();
     this.connecting = false;
     this.connected = false;
     this.generation += 1;
     this.removeTransportListeners();
     this.parser = new SerialParser();
     this.rejectPendingWrites(new Error('Serial port disconnected'));
-    if (!wasActive) return;
-    try {
-      await this.api.closePort();
-    } finally {
-      this.emit({ type: 'disconnected' });
-    }
+    this.emit({ type: 'disconnected' });
   }
 
   async selectProfile(profile: TestProfile): Promise<void> {

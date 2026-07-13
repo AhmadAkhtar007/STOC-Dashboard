@@ -33,6 +33,7 @@ export default function App({ adapter: suppliedAdapter, controller: suppliedCont
   const [unsavedResult, setUnsavedResult] = useState<ControllerSnapshot['result']>();
   const savedId = useRef<string | undefined>(undefined);
   const portRequest = useRef(0);
+  const previousStatus = useRef(snapshot.state.status);
   const serialAdapter = adapter instanceof ElectronSerialAdapter ? adapter : undefined;
   useEffect(() => controller.subscribe(setSnapshot), [controller]);
   const refreshPorts = useCallback(async () => {
@@ -80,6 +81,11 @@ export default function App({ adapter: suppliedAdapter, controller: suppliedCont
   }, [snapshot.result, storage]);
 
   const status = snapshot.state.status;
+  useEffect(() => {
+    const wasDisconnected = previousStatus.current === 'disconnected';
+    previousStatus.current = status;
+    if (serialAdapter && status === 'disconnected' && !wasDisconnected) void refreshPorts();
+  }, [refreshPorts, serialAdapter, status]);
   const connected = !['disconnected', 'connecting'].includes(status) && Boolean(snapshot.connectionLabel);
   const profileId = 'profileId' in snapshot.state ? snapshot.state.profileId : undefined;
   const run = (action: () => Promise<void>) => { setUiError(undefined); void action().catch(error => setUiError(error instanceof Error ? error.message : String(error))); };
@@ -93,7 +99,6 @@ export default function App({ adapter: suppliedAdapter, controller: suppliedCont
   };
   const disconnectDevice = async () => {
     await controller.disconnect();
-    await refreshPorts();
   };
   const selected = snapshot.result;
   const retrySave = () => {

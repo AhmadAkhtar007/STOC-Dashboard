@@ -102,4 +102,27 @@ describe('App', () => {
     await waitFor(() => expect(listPorts).toHaveBeenCalledTimes(2))
     expect(screen.getByRole('alert')).toHaveTextContent('Access denied')
   })
+
+  it('refreshes ports and clears the stale selection after a physical unplug', async () => {
+    let notifyClose!: () => void
+    const listPorts = vi.fn()
+      .mockResolvedValueOnce([{ path: 'COM7' }])
+      .mockResolvedValueOnce([{ path: 'COM8' }])
+    window.stocDesktop = createDesktopApi({
+      listPorts,
+      onSerialClose: (listener) => {
+        notifyClose = listener
+        return () => undefined
+      },
+    })
+    render(<App />)
+    const selector = await screen.findByRole('combobox', { name: /serial port/i })
+    await screen.getByRole('button', { name: /connect proteus/i }).click()
+    await screen.findByRole('button', { name: /disconnect proteus/i })
+
+    notifyClose()
+
+    await waitFor(() => expect(listPorts).toHaveBeenCalledTimes(2))
+    expect(selector).toHaveValue('COM8')
+  })
 })

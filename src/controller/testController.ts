@@ -84,6 +84,11 @@ export class TestController {
     this.generation += 1;
     const adapter = this.adapter;
     this.clearPending(new Error('Device disconnected'));
+    if (adapter) await adapter.disconnect();
+    this.releaseSession();
+  }
+
+  private releaseSession(): void {
     this.unsubscribeAdapter?.();
     this.unsubscribeAdapter = undefined;
     this.adapter = undefined;
@@ -94,7 +99,6 @@ export class TestController {
     this.connectionLabel = undefined;
     this.startedAt = undefined;
     this.apply({ type: 'DISCONNECT' }, 'Disconnected');
-    if (adapter) await adapter.disconnect();
   }
 
   selectProfile(profileId: ProfileId): Promise<void> {
@@ -204,7 +208,15 @@ export class TestController {
           this.settle('connect');
           return;
         case 'disconnected':
-          void this.disconnect().catch((error: unknown) => this.recordTeardownError(error));
+          this.generation += 1;
+          this.clearPending(new Error('Device disconnected'));
+          {
+            const disconnectedAdapter = this.adapter;
+            this.releaseSession();
+            if (disconnectedAdapter) {
+              void disconnectedAdapter.disconnect().catch((error: unknown) => this.recordTeardownError(error));
+            }
+          }
           return;
         case 'mode-confirmed':
           if (this.state.status !== 'connected' || this.pending?.kind !== 'profile') return;

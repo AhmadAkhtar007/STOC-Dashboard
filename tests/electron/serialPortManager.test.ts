@@ -1,7 +1,11 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 
-import { SerialPortManager, type ManagedSerialPort } from '../../electron/serialPortManager';
+import {
+  SerialPortManager,
+  type ManagedSerialPort,
+  type SerialPortManagerDependencies,
+} from '../../electron/serialPortManager';
 
 class FakePort extends EventEmitter implements ManagedSerialPort {
   isOpen = false;
@@ -24,7 +28,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-function setup() {
+function setup(overrides: Partial<SerialPortManagerDependencies> = {}) {
   const ports = new Map<string, FakePort>();
   const events = { data: vi.fn(), error: vi.fn(), close: vi.fn() };
   let configurePort: ((port: FakePort) => void) | undefined;
@@ -39,6 +43,7 @@ function setup() {
     onData: events.data,
     onError: events.error,
     onUnexpectedClose: events.close,
+    ...overrides,
   });
   return { manager, ports, events, configureNextPort: (configure: (port: FakePort) => void) => { configurePort = configure; } };
 }
@@ -116,5 +121,73 @@ describe('SerialPortManager', () => {
     expect(manager.state).toBe('open');
     expect(events.close).not.toHaveBeenCalled();
     await expect(manager.write('F')).resolves.toBeUndefined();
+  });
+
+  it('returns to closed and permits retry when port discovery rejects during open', async () => {
+    let attempts = 0;
+    const { manager } = setup({
+      listPorts: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('Discovery failed');
+        return [{ path: 'COM7' }];
+      },
+    });
+
+    await expect(manager.open('COM7')).rejects.toThrow('Discovery failed');
+    expect(manager.state).toBe('closed');
+    await expect(manager.open('COM7')).resolves.toBeUndefined();
+    expect(manager.state).toBe('open');
+  });
+
+  it('returns to closed and permits retry when port construction throws', async () => {
+    let attempts = 0;
+    const createdPorts: FakePort[] = [];
+    const { manager } = setup({
+      createPort: () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('Driver constructor failed');
+        const port = new FakePort();
+        createdPorts.push(port);
+        return port;
+      },
+    });
+
+    await expect(manager.open('COM7')).rejects.toThrow('Driver constructor failed');
+    expect(manager.state).toBe('closed');
+    await expect(manager.open('COM7')).resolves.toBeUndefined();
+    expect(createdPorts).toHaveLength(1);
+    expect(manager.state).toBe('open');
+  });
+
+  it('retains an open port after close fails so cleanup can be retried', async () => {
+    const { manager, ports, events } = setup();
+    await manager.open('COM7');
+    const port = ports.get('COM7')!;
+    port.close.mockImplementationOnce((callback) => callback(new Error('Close failed')));
+
+    await expect(manager.close()).rejects.toThrow('Close failed');
+
+    expect(manager.state).toBe('open');
+    port.emit('data', Buffer.from('still connected'));
+    expect(events.data).toHaveBeenCalledWith('still connected');
+    await expect(manager.open('COM8')).rejects.toThrow('already open or opening');
+    await expect(manager.close()).resolves.toBeUndefined();
+    expect(manager.state).toBe('closed');
+  });
+
+  it('rejects an in-flight native write when the device closes and unblocks the queue', async () => {
+    const { manager, ports } = setup();
+    await manager.open('COM7');
+    const port = ports.get('COM7')!;
+    port.write.mockImplementationOnce(() => undefined);
+
+    const writing = manager.write('F');
+    await vi.waitFor(() => expect(port.write).toHaveBeenCalledOnce());
+    port.isOpen = false;
+    port.emit('close');
+
+    await expect(writing).rejects.toThrow('disconnected during write');
+    await expect(manager.open('COM8')).resolves.toBeUndefined();
+    expect(manager.state).toBe('open');
   });
 });
