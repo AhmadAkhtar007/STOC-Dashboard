@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { TestResult } from '../../src/domain/types';
-import { loadResults, saveResult } from '../../src/storage/resultStore';
+import { loadResults, ResultStorageError, saveResult } from '../../src/storage/resultStore';
 
 function result(id: string, completedAt = Number(id.replace(/\D/g, '')) || 1): TestResult {
   return {
@@ -73,4 +73,59 @@ describe('resultStore', () => {
     firstLoad[0].profile.name = 'changed';
     expect(loadResults()[0].profile.name).toBe('Single Phase');
   });
+
+  it('evicts oldest results until a quota-limited write succeeds', () => {
+    const storage = new ThresholdStorage();
+    saveResult(result('run-1'), storage);
+    saveResult(result('run-2'), storage);
+    const twoResultSize = storage.byteLength;
+    saveResult(result('run-3'), storage);
+    storage.maximumBytes = twoResultSize;
+
+    const saved = saveResult(result('run-4'), storage);
+
+    expect(saved.map(({ id }) => id)).toEqual(['run-4', 'run-3']);
+    expect(loadResults(storage).map(({ id }) => id)).toEqual(['run-4', 'run-3']);
+  });
+
+  it('throws a domain error and preserves existing data when no write can succeed', () => {
+    const storage = new ThresholdStorage();
+    saveResult(result('existing'), storage);
+    const previous = storage.getItem('stoc:test-results:v1');
+    const securityError = new DOMException('Access denied', 'SecurityError');
+    storage.alwaysThrow = securityError;
+
+    let thrown: unknown;
+    try {
+      saveResult(result('new'), storage);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ResultStorageError);
+    expect(thrown).toMatchObject({
+      message: expect.stringMatching(/could not be saved/i),
+      cause: securityError,
+    });
+    expect(storage.getItem('stoc:test-results:v1')).toBe(previous);
+  });
 });
+
+class ThresholdStorage implements Storage {
+  private readonly values = new Map<string, string>();
+  maximumBytes = Number.POSITIVE_INFINITY;
+  alwaysThrow?: Error;
+
+  get length(): number { return this.values.size; }
+  get byteLength(): number {
+    return [...this.values.values()].reduce((total, value) => total + value.length, 0);
+  }
+  clear(): void { this.values.clear(); }
+  getItem(key: string): string | null { return this.values.get(key) ?? null; }
+  key(index: number): string | null { return [...this.values.keys()][index] ?? null; }
+  removeItem(key: string): void { this.values.delete(key); }
+  setItem(key: string, value: string): void {
+    if (this.alwaysThrow) throw this.alwaysThrow;
+    if (value.length > this.maximumBytes) throw new DOMException('Quota exceeded', 'QuotaExceededError');
+    this.values.set(key, value);
+  }
+}

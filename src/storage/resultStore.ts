@@ -6,6 +6,13 @@ const LIMIT = 50;
 const PROFILE_IDS: readonly ProfileId[] = ['single-phase', 'three-phase', 'ltct'];
 const ADAPTER_KINDS: readonly AdapterKind[] = ['simulator', 'serial'];
 
+export class ResultStorageError extends Error {
+  constructor(cause: unknown) {
+    super('The test result could not be saved to local storage.', { cause });
+    this.name = 'ResultStorageError';
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -68,6 +75,15 @@ export function loadResults(storage: Storage = localStorage): TestResult[] {
 
 export function saveResult(result: TestResult, storage: Storage = localStorage): TestResult[] {
   const results = [cloneResult(result), ...loadResults(storage)].slice(0, LIMIT);
-  storage.setItem(KEY, JSON.stringify(results));
-  return results.map(cloneResult);
+  let lastFailure: unknown;
+  for (let length = results.length; length >= 1; length -= 1) {
+    const retained = results.slice(0, length);
+    try {
+      storage.setItem(KEY, JSON.stringify(retained));
+      return retained.map(cloneResult);
+    } catch (error) {
+      lastFailure = error;
+    }
+  }
+  throw new ResultStorageError(lastFailure);
 }
