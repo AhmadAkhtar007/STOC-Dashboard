@@ -194,15 +194,20 @@ export class TestController {
       logs: this.logs.map((entry) => ({ ...entry })),
       metadata: this.metadata ? { ...this.metadata } : undefined,
       result: this.result
-        ? {
-            ...this.result,
-            metadata: { ...this.result.metadata },
-            profile: { ...this.result.profile },
-            samples: [...this.result.samples],
-            ...(this.result.outcome === 'failed'
-              ? { diagnosticTrace: this.result.diagnosticTrace.map((entry) => ({ ...entry })) }
-              : {}),
-          }
+        ? this.result.outcome === 'failed'
+          ? {
+              ...this.result,
+              metadata: { ...this.result.metadata },
+              profile: { ...this.result.profile },
+              samples: [...this.result.samples],
+              diagnosticTrace: this.result.diagnosticTrace.map((entry) => ({ ...entry })),
+            }
+          : {
+              ...this.result,
+              metadata: { ...this.result.metadata },
+              profile: { ...this.result.profile },
+              samples: [...this.result.samples],
+            }
         : undefined,
       connectionLabel: this.connectionLabel,
     };

@@ -69,14 +69,20 @@ function isTestResult(value: unknown): value is TestResult {
 }
 
 function cloneResult(result: TestResult): TestResult {
+  if (result.outcome === 'failed') {
+    return {
+      ...result,
+      metadata: { ...result.metadata },
+      profile: { ...result.profile },
+      samples: [...result.samples],
+      diagnosticTrace: result.diagnosticTrace.map((entry) => ({ ...entry })),
+    };
+  }
   return {
     ...result,
     metadata: { ...result.metadata },
     profile: { ...result.profile },
     samples: [...result.samples],
-    ...(result.outcome === 'failed'
-      ? { diagnosticTrace: result.diagnosticTrace.map((entry) => ({ ...entry })) }
-      : {}),
   };
 }
 
