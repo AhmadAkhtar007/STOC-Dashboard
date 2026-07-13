@@ -2,6 +2,7 @@ import type { AdapterKind, ProfileId, TestProfile, TestResult } from '../domain/
 
 const KEY = 'stoc:test-results:v1';
 const LIMIT = 50;
+const DIAGNOSTIC_LIMIT = 50;
 
 const PROFILE_IDS: readonly ProfileId[] = ['single-phase', 'three-phase', 'ltct'];
 const ADAPTER_KINDS: readonly AdapterKind[] = ['simulator', 'serial'];
@@ -39,9 +40,16 @@ function isMetadata(value: unknown): value is TestResult['metadata'] {
   });
 }
 
+function isDiagnosticEntry(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return isFiniteNumber(value.timestamp)
+    && (value.level === 'status' || value.level === 'diagnostic' || value.level === 'error')
+    && typeof value.message === 'string';
+}
+
 function isTestResult(value: unknown): value is TestResult {
   if (!isRecord(value)) return false;
-  return typeof value.id === 'string'
+  const baseIsValid = typeof value.id === 'string'
     && isFiniteNumber(value.startedAt)
     && isFiniteNumber(value.completedAt)
     && typeof value.adapterKind === 'string'
@@ -50,8 +58,14 @@ function isTestResult(value: unknown): value is TestResult {
     && isProfile(value.profile)
     && Array.isArray(value.samples)
     && value.samples.every(isFiniteNumber)
-    && isFiniteNumber(value.rawPeak)
-    && value.outcome === 'sequence-complete';
+    && isFiniteNumber(value.rawPeak);
+  if (!baseIsValid) return false;
+  if (value.outcome === 'sequence-complete') return true;
+  return value.outcome === 'failed'
+    && typeof value.failureMessage === 'string'
+    && Array.isArray(value.diagnosticTrace)
+    && value.diagnosticTrace.length <= DIAGNOSTIC_LIMIT
+    && value.diagnosticTrace.every(isDiagnosticEntry);
 }
 
 function cloneResult(result: TestResult): TestResult {
@@ -60,6 +74,9 @@ function cloneResult(result: TestResult): TestResult {
     metadata: { ...result.metadata },
     profile: { ...result.profile },
     samples: [...result.samples],
+    ...(result.outcome === 'failed'
+      ? { diagnosticTrace: result.diagnosticTrace.map((entry) => ({ ...entry })) }
+      : {}),
   };
 }
 

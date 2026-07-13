@@ -126,6 +126,44 @@ describe('TestController', () => {
     expect(adapter.connect).toHaveBeenCalledWith('COM7');
   });
 
+  it('retains a bounded diagnostic result when an accepted run fails', async () => {
+    const { adapter, controller } = await configuredController();
+    controller.arm(metadata);
+    const firing = controller.fire();
+    adapter.emit({ type: 'firing' });
+    for (let index = 0; index < 75; index += 1) {
+      adapter.emit({ type: 'diagnostic', message: `diagnostic-${index}` });
+    }
+    adapter.emit({ type: 'error', message: 'SCR feedback lost' });
+
+    await expect(firing).rejects.toThrow('SCR feedback lost');
+    const result = controller.getSnapshot().result;
+    expect(result).toMatchObject({
+      id: 'run-id',
+      startedAt: 1_000,
+      completedAt: 1_000,
+      outcome: 'failed',
+      failureMessage: 'SCR feedback lost',
+      samples: [],
+      rawPeak: 0,
+    });
+    expect(result?.diagnosticTrace).toHaveLength(50);
+    expect(result?.diagnosticTrace.at(-1)).toMatchObject({
+      level: 'error',
+      message: 'SCR feedback lost',
+    });
+    expect(result?.diagnosticTrace.some(({ message }) => message === 'diagnostic-0')).toBe(false);
+  });
+
+  it('does not fabricate a run result when setup fails before fire', async () => {
+    const adapter = new FakeAdapter();
+    adapter.connect.mockRejectedValue(new Error('port unavailable'));
+    const controller = new TestController();
+
+    await expect(controller.connect(adapter)).rejects.toThrow('port unavailable');
+    expect(controller.getSnapshot().result).toBeUndefined();
+  });
+
   it('ignores completion and waveform events until firing is acknowledged', async () => {
     const { adapter, controller } = await configuredController();
     controller.arm(metadata);
@@ -405,6 +443,18 @@ describe('TestController', () => {
     expect(snapshot.state.status).toBe('disconnected');
     expect(snapshot.logs).toContainEqual(expect.objectContaining({ message: 'close failed' }));
     expect(adapter.listeners.size).toBe(0);
+  });
+
+  it('bounds live controller logs while preserving the newest events', async () => {
+    const { adapter, controller } = await connectedController();
+    for (let index = 0; index < 250; index += 1) {
+      adapter.emit({ type: 'diagnostic', message: `event-${index}` });
+    }
+
+    const logs = controller.getSnapshot().logs;
+    expect(logs).toHaveLength(200);
+    expect(logs[0].message).toBe('event-50');
+    expect(logs.at(-1)?.message).toBe('event-249');
   });
 
   it('keeps a manually disconnected session active when native close fails', async () => {

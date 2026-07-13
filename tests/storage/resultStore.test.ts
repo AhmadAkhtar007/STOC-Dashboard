@@ -23,6 +23,18 @@ function result(id: string, completedAt = Number(id.replace(/\D/g, '')) || 1): T
   };
 }
 
+function failedResult(id: string): TestResult {
+  return {
+    ...result(id),
+    outcome: 'failed',
+    failureMessage: 'Waveform completion timed out',
+    diagnosticTrace: [
+      { timestamp: 10, level: 'diagnostic', message: 'waiting for waveform' },
+      { timestamp: 20, level: 'error', message: 'Waveform completion timed out' },
+    ],
+  };
+}
+
 describe('resultStore', () => {
   beforeEach(() => localStorage.clear());
 
@@ -58,6 +70,29 @@ describe('resultStore', () => {
     ]));
 
     expect(loadResults()).toEqual([result('valid')]);
+  });
+
+  it('stores valid failed runs and rejects failed records without diagnostics', () => {
+    const failed = failedResult('failed-1');
+    localStorage.setItem('stoc:test-results:v1', JSON.stringify([
+      failed,
+      { ...failed, id: 'missing-trace', diagnosticTrace: undefined },
+      { ...failed, id: 'bad-trace', diagnosticTrace: [{ timestamp: 1, level: 'unknown', message: 'bad' }] },
+    ]));
+
+    expect(loadResults()).toEqual([failed]);
+  });
+
+  it('returns defensive copies of failed diagnostic traces', () => {
+    const failed = failedResult('failed-1');
+    const saved = saveResult(failed);
+    saved[0].diagnosticTrace![0].message = 'changed';
+    failed.diagnosticTrace![1].message = 'changed input';
+
+    expect(loadResults()[0].diagnosticTrace).toEqual([
+      { timestamp: 10, level: 'diagnostic', message: 'waiting for waveform' },
+      { timestamp: 20, level: 'error', message: 'Waveform completion timed out' },
+    ]);
   });
 
   it('returns defensive copies that cannot mutate storage or input', () => {

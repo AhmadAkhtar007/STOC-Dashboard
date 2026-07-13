@@ -32,6 +32,26 @@ describe('exporters', () => {
     expect(JSON.parse(resultToJson(result))).toEqual(result);
   });
 
+  it('exports a failed outcome, reason, and diagnostic trace without claiming completion', () => {
+    const failed: TestResult = {
+      ...result,
+      outcome: 'failed',
+      failureMessage: 'SCR feedback lost',
+      diagnosticTrace: [
+        { timestamp: 1_500, level: 'diagnostic', message: 'gate enabled' },
+        { timestamp: 1_750, level: 'error', message: 'SCR feedback lost' },
+      ],
+    };
+
+    expect(JSON.parse(resultToJson(failed))).toEqual(failed);
+    const csv = resultToCsv(failed);
+    expect(csv).toContain('# Outcome,failed');
+    expect(csv).toContain('# Failure message,SCR feedback lost');
+    expect(csv).toContain('diagnostic_timestamp,level,message');
+    expect(csv).toContain('1970-01-01T00:00:01.750Z,error,SCR feedback lost');
+    expect(csv).not.toContain('sequence-complete');
+  });
+
   it('writes escaped human-readable metadata comments before the exact sample header', () => {
     const csv = resultToCsv(result);
     const lines = csv.split('\r\n');

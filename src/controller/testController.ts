@@ -15,6 +15,9 @@ import type {
 
 type TimerId = ReturnType<typeof globalThis.setTimeout>;
 
+const MAX_CONTROLLER_LOGS = 200;
+const MAX_RESULT_DIAGNOSTICS = 50;
+
 interface ControllerDependencies {
   now?: () => number;
   createId?: () => string;
@@ -196,6 +199,9 @@ export class TestController {
             metadata: { ...this.result.metadata },
             profile: { ...this.result.profile },
             samples: [...this.result.samples],
+            ...(this.result.outcome === 'failed'
+              ? { diagnosticTrace: this.result.diagnosticTrace.map((entry) => ({ ...entry })) }
+              : {}),
           }
         : undefined,
       connectionLabel: this.connectionLabel,
@@ -340,6 +346,26 @@ export class TestController {
     if (rejectPending) this.clearPending(new Error(message));
     if (failedKind === 'connect') this.releaseFailedConnection();
     this.apply({ type: 'FAIL', message }, message, 'error');
+    this.completeFailedResult(message);
+  }
+
+  private completeFailedResult(message: string): void {
+    if (this.startedAt === undefined || this.result || !this.adapter || !this.selectedProfile || !this.metadata) return;
+    const samples = [...this.state.samples];
+    this.result = {
+      id: this.createId(),
+      startedAt: this.startedAt,
+      completedAt: this.now(),
+      adapterKind: this.adapter.kind,
+      metadata: { ...this.metadata },
+      profile: { ...this.selectedProfile },
+      samples,
+      rawPeak: samples.length === 0 ? 0 : Math.max(...samples),
+      outcome: 'failed',
+      failureMessage: message,
+      diagnosticTrace: this.logs.slice(-MAX_RESULT_DIAGNOSTICS).map((entry) => ({ ...entry })),
+    };
+    this.notify();
   }
 
   private releaseFailedConnection(): void {
@@ -366,6 +392,9 @@ export class TestController {
 
   private log(level: ControllerLogEntry['level'], message: string): void {
     this.logs.push({ timestamp: this.now(), level, message });
+    if (this.logs.length > MAX_CONTROLLER_LOGS) {
+      this.logs.splice(0, this.logs.length - MAX_CONTROLLER_LOGS);
+    }
   }
 
   private notify(): void {

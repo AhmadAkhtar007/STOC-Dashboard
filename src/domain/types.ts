@@ -46,7 +46,13 @@ export interface RunMetadata {
   notes?: string;
 }
 
-export interface TestResult {
+export interface ControllerLogEntry {
+  timestamp: number;
+  level: 'status' | 'diagnostic' | 'error';
+  message: string;
+}
+
+interface TestResultBase {
   id: string;
   startedAt: number;
   completedAt: number;
@@ -55,14 +61,21 @@ export interface TestResult {
   profile: TestProfile;
   samples: number[];
   rawPeak: number;
-  outcome: 'sequence-complete';
 }
 
-export interface ControllerLogEntry {
-  timestamp: number;
-  level: 'status' | 'diagnostic' | 'error';
-  message: string;
+export interface SequenceCompleteTestResult extends TestResultBase {
+  outcome: 'sequence-complete';
+  failureMessage?: never;
+  diagnosticTrace?: never;
 }
+
+export interface FailedTestResult extends TestResultBase {
+  outcome: 'failed';
+  failureMessage: string;
+  diagnosticTrace: ControllerLogEntry[];
+}
+
+export type TestResult = SequenceCompleteTestResult | FailedTestResult;
 
 export interface ControllerSnapshot {
   state: TestState;

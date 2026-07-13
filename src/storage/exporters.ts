@@ -26,6 +26,7 @@ export function resultToCsv(result: TestResult): string {
     ['Target amps', result.profile.targetAmps],
     ['Duration ms', result.profile.durationMs],
     ['Outcome', result.outcome],
+    ['Failure message', result.outcome === 'failed' ? result.failureMessage : undefined],
     ['Raw peak', result.rawPeak],
   ];
   const comments = metadata
@@ -35,7 +36,17 @@ export function resultToCsv(result: TestResult): string {
       return `# ${label},${csvField(safeValue)}`;
     });
   const samples = result.samples.map((sample, index) => `${index},${sample}`);
-  return [...comments, 'sample_index,raw_adc', ...samples].join('\r\n');
+  const diagnostics = result.outcome === 'failed'
+    ? [
+        'diagnostic_timestamp,level,message',
+        ...result.diagnosticTrace.map((entry) => [
+          new Date(entry.timestamp).toISOString(),
+          entry.level,
+          protectMetadata(entry.message),
+        ].map(csvField).join(',')),
+      ]
+    : [];
+  return [...comments, ...diagnostics, 'sample_index,raw_adc', ...samples].join('\r\n');
 }
 
 export function downloadFile(filename: string, content: string, mimeType: string): void {
