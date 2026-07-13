@@ -1,0 +1,2 @@
+import type { ControllerLogEntry } from '../domain/types';
+export function EventTimeline({ logs }: { logs: ControllerLogEntry[] }) { return <section className="panel timeline-panel"><div className="panel-heading"><div><p className="eyebrow">Controller trace</p><h2>Event timeline</h2></div></div><ol aria-label="Controller event timeline">{logs.slice(-7).reverse().map((log, i) => <li key={`${log.timestamp}-${i}`} className={log.level}><time>{new Date(log.timestamp).toLocaleTimeString([], { hour12: false })}</time><span>{log.message}</span></li>)}</ol></section>; }

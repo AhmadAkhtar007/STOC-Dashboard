@@ -7,6 +7,6 @@ describe('App', () => {
   it('renders the dashboard scaffold', () => {
     render(<App />)
 
-    expect(screen.getByRole('heading', { name: 'STOC Dashboard' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Energy Meter Test System' })).toBeInTheDocument()
   })
 })
