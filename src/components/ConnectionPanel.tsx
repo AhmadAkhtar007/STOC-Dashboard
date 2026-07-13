@@ -18,7 +18,7 @@ export function ConnectionPanel({ connected, busy, adapterKind, connectionLabel,
       {portsLoading && <span role="status" aria-label="Port discovery">Scanning ports…</span>}
       {portError && <span role="alert" aria-label="Port discovery error">{portError}</span>}
     </div>}
-    <button className="secondary-button" disabled={busy || portsLoading || (!connected && needsPort)} onClick={connected ? onDisconnect : onConnect}>
+    <button className="secondary-button" disabled={!connected && (busy || portsLoading || needsPort)} onClick={connected ? onDisconnect : onConnect}>
       {connected ? `Disconnect ${adapterName}` : `Connect ${adapterName}`}
     </button>
   </section>;

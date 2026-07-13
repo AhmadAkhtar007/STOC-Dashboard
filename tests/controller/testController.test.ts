@@ -126,6 +126,27 @@ describe('TestController', () => {
     expect(adapter.connect).toHaveBeenCalledWith('COM7');
   });
 
+  it('ignores completion and waveform events until firing is acknowledged', async () => {
+    const { adapter, controller } = await configuredController();
+    controller.arm(metadata);
+    const firing = controller.fire();
+
+    adapter.emit({ type: 'fire-complete' });
+    adapter.emit({ type: 'waveform', samples: [512, 900] });
+
+    expect(controller.getSnapshot()).toMatchObject({
+      state: { status: 'firing', samples: [] },
+      result: undefined,
+    });
+
+    adapter.emit({ type: 'firing' });
+    adapter.emit({ type: 'fire-complete' });
+    adapter.emit({ type: 'waveform', samples: [512, 900] });
+    await firing;
+
+    expect(controller.getSnapshot().state.status).toBe('complete');
+  });
+
   it('rejects premature and repeated fire without sending extra adapter commands', async () => {
     const { adapter, controller } = await configuredController();
     await expect(controller.fire()).rejects.toThrow('Test is not armed');

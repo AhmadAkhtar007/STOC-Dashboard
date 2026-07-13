@@ -47,6 +47,7 @@ export class TestController {
   private pending?: PendingOperation;
   private generation = 0;
   private requestedProfileId?: ProfileId;
+  private firingAcknowledged = false;
 
   constructor(dependencies: ControllerDependencies = {}) {
     this.now = dependencies.now ?? Date.now;
@@ -98,6 +99,7 @@ export class TestController {
     this.result = undefined;
     this.connectionLabel = undefined;
     this.startedAt = undefined;
+    this.firingAcknowledged = false;
     this.apply({ type: 'DISCONNECT' }, 'Disconnected');
   }
 
@@ -133,6 +135,7 @@ export class TestController {
       return Promise.reject(error);
     }
     this.startedAt = this.now();
+    this.firingAcknowledged = false;
     const generation = this.generation;
     const { promise, operation } = this.waitFor('fire', 2_000, 'Firing acknowledgement timed out');
     void this.adapter.fire().catch((error: unknown) => {
@@ -169,6 +172,7 @@ export class TestController {
     this.result = undefined;
     this.connectionLabel = undefined;
     this.startedAt = undefined;
+    this.firingAcknowledged = false;
     this.state = transition(this.state, { type: 'DISCONNECT' });
     this.notify();
   }
@@ -231,15 +235,16 @@ export class TestController {
           return;
         case 'firing':
           if (this.state.status !== 'firing' || this.pending?.kind !== 'fire') return;
+          this.firingAcknowledged = true;
           this.apply({ type: 'FIRING_ACK' }, 'Firing acknowledged');
           this.replaceFireTimer(this.selectedProfile!.durationMs + 3_000);
           return;
         case 'fire-complete':
-          if (this.state.status !== 'firing') return;
+          if (this.state.status !== 'firing' || !this.firingAcknowledged) return;
           this.apply({ type: 'FIRE_COMPLETE' }, 'Firing complete; awaiting waveform');
           return;
         case 'waveform':
-          if (this.state.status !== 'capturing') return;
+          if (this.state.status !== 'capturing' || !this.firingAcknowledged) return;
           this.apply({ type: 'WAVEFORM', samples: event.samples }, 'Waveform captured');
           this.completeResult();
           this.settle('fire');
