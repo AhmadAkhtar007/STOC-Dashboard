@@ -100,6 +100,10 @@ export default function App({ adapter: suppliedAdapter, controller: suppliedCont
   const disconnectDevice = async () => {
     await controller.disconnect();
   };
+  const resetController = () => {
+    controller.reset();
+    setUiError(undefined);
+  };
   const selected = snapshot.result;
   const retrySave = () => {
     if (!unsavedResult) return;
@@ -121,7 +125,7 @@ export default function App({ adapter: suppliedAdapter, controller: suppliedCont
   return <div className="app-shell">
     <a className="skip-link" href="#main-control">Skip to test controls</a>
     <SystemHeader status={status} label={snapshot.connectionLabel} />
-    {(saveError || uiError || status === 'error') && <div className="error-banner" role="alert"><strong>System exception</strong><span>{saveError ?? uiError ?? ('error' in snapshot.state ? snapshot.state.error : 'Unknown error')}</span>{unsavedResult && <button onClick={retrySave}>Retry save</button>}</div>}
+    {(saveError || uiError || status === 'error') && <div className="error-banner" role="alert"><strong>System exception</strong><span>{saveError ?? uiError ?? ('error' in snapshot.state ? snapshot.state.error : 'Unknown error')}</span>{unsavedResult && <button onClick={retrySave}>Retry save</button>}{status === 'error' && <button onClick={resetController}>Reset controller</button>}</div>}
     <main id="main-control" className="dashboard-grid">
       <aside className="setup-column">
         <ConnectionPanel connected={connected} busy={status === 'connecting' || ['firing', 'capturing'].includes(status)} adapterKind={adapter.kind} connectionLabel={snapshot.connectionLabel} ports={serialAdapter ? ports : undefined} selectedPort={selectedPort} portsLoading={portsLoading} portError={portError} onPortChange={setSelectedPort} onRefreshPorts={() => { void refreshPorts(); }} onConnect={() => run(connectDevice)} onDisconnect={() => run(disconnectDevice)} />

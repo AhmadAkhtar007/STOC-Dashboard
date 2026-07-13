@@ -103,6 +103,24 @@ describe('App', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Access denied')
   })
 
+  it('lets the operator reset a failed connection and retry without reloading', async () => {
+    const openPort = vi.fn()
+      .mockRejectedValueOnce(new Error('Access denied'))
+      .mockResolvedValueOnce(undefined)
+    window.stocDesktop = createDesktopApi({ openPort })
+    render(<App />)
+    await screen.findByRole('combobox', { name: /serial port/i })
+
+    await screen.getByRole('button', { name: /connect proteus/i }).click()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Access denied')
+
+    await screen.getByRole('button', { name: /reset controller/i }).click()
+    expect(screen.getByRole('status', { name: /controller state/i })).toHaveTextContent('DISCONNECTED')
+    await screen.getByRole('button', { name: /connect proteus/i }).click()
+
+    await waitFor(() => expect(openPort).toHaveBeenCalledTimes(2))
+  })
+
   it('refreshes ports and clears the stale selection after a physical unplug', async () => {
     let notifyClose!: () => void
     const listPorts = vi.fn()
