@@ -24,6 +24,7 @@ export default function App({ adapter: suppliedAdapter, controller: suppliedCont
   const [snapshot, setSnapshot] = useState<ControllerSnapshot>(() => controller.getSnapshot());
   const [metadata, setMetadata] = useState<RunMetadata>({});
   const [history, setHistory] = useState(() => loadResults(storage));
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string>();
   const [uiError, setUiError] = useState<string>();
   const [ports, setPorts] = useState<SerialPortDescriptor[]>([]);
   const [selectedPort, setSelectedPort] = useState<string>();
@@ -104,7 +105,7 @@ export default function App({ adapter: suppliedAdapter, controller: suppliedCont
     controller.reset();
     setUiError(undefined);
   };
-  const selected = snapshot.result;
+  const selected = snapshot.result ?? history.find((result) => result.id === selectedHistoryId);
   const retrySave = () => {
     if (!unsavedResult) return;
     try {
@@ -136,7 +137,7 @@ export default function App({ adapter: suppliedAdapter, controller: suppliedCont
         <div className="monitor-strip"><div><span>ADAPTER</span><strong role="status" aria-label="Active adapter">{snapshot.connectionLabel ?? (adapter.kind === 'simulator' ? 'SIMULATOR' : 'SERIAL')}</strong></div><div><span>STATE</span><strong role="status" aria-label="Controller state" className={`text-${status}`}>{status.toUpperCase()}</strong></div><div><span>MEASUREMENT</span><strong>RAW ADC</strong></div><div><span>CALIBRATION</span><strong>NOT APPLIED</strong></div></div>
         <WaveformChart samples={snapshot.state.samples} simulated={adapter.kind === 'simulator'} />
         <div className="result-row"><ResultSummary result={selected} onJson={() => exportResult('json')} onCsv={() => exportResult('csv')} onPrint={() => window.print()} /><EventTimeline logs={snapshot.logs} /></div>
-        <HistoryPanel results={history} />
+        <HistoryPanel results={history} selectedId={selected?.id} onSelect={setSelectedHistoryId} />
       </section>
     </main>
     <footer><span>STOC CONTROL / DEMONSTRATION BUILD</span><span>{adapter.kind === 'simulator' ? 'SIMULATOR OUTPUT' : 'SERIAL INPUT'} IS NOT A CALIBRATED CURRENT MEASUREMENT</span></footer>

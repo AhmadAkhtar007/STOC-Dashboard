@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App'
+import type { TestResult } from './domain/types'
 import type { StocDesktopApi } from './electron'
 
 function createDesktopApi(overrides: Partial<StocDesktopApi> = {}): StocDesktopApi {
@@ -28,6 +29,37 @@ describe('App', () => {
 
     expect(screen.getByRole('heading', { name: 'Energy Meter Test System' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /connect simulator/i })).toBeInTheDocument()
+  })
+
+  it('reopens a persisted run from history for export or printing', async () => {
+    const storedResult: TestResult = {
+      id: 'stored-run',
+      startedAt: 1_000,
+      completedAt: 1_125,
+      adapterKind: 'simulator',
+      metadata: { meterSerialNumber: 'MTR-42' },
+      profile: { id: 'ltct', name: 'LTCT', targetAmps: 300, durationMs: 500, serialCommand: '3' },
+      samples: [512, 640],
+      rawPeak: 640,
+      outcome: 'sequence-complete',
+    }
+    const storage: Storage = {
+      length: 1,
+      clear: vi.fn(),
+      getItem: vi.fn(() => JSON.stringify([storedResult])),
+      key: vi.fn(() => 'stoc:test-results:v1'),
+      removeItem: vi.fn(),
+      setItem: vi.fn(),
+    }
+    render(<App storage={storage} />)
+
+    expect(screen.getByRole('heading', { name: /awaiting sequence/i })).toBeInTheDocument()
+    await screen.getByRole('button', { name: /open run mtr-42/i }).click()
+
+    expect(screen.getByRole('heading', { name: /sequence complete/i })).toBeInTheDocument()
+    expect(screen.getByText('125 ms')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /export json/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /print summary/i })).toBeEnabled()
   })
 
   it('offers discovered serial ports only when the Electron bridge is present', async () => {
