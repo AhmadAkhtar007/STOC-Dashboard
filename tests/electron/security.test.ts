@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { isAllowedRendererUrl } from '../../electron/security';
@@ -27,5 +28,18 @@ describe('isAllowedRendererUrl', () => {
 
   it('rejects malformed URLs', () => {
     expect(isAllowedRendererUrl('not a URL', distRoot, true)).toBe(false);
+  });
+});
+
+describe('renderer content security policy', () => {
+  it('restricts production resources to the app and disallows embedded frames', () => {
+    const html = fs.readFileSync(path.resolve('index.html'), 'utf8');
+
+    expect(html).toContain('http-equiv="Content-Security-Policy"');
+    expect(html).toContain("default-src 'self'");
+    expect(html).toContain("script-src 'self'");
+    expect(html).toContain("object-src 'none'");
+    expect(html).toContain("frame-src 'none'");
+    expect(html).not.toContain("script-src 'self' 'unsafe-inline'");
   });
 });

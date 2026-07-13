@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { SerialPort } from 'serialport';
 import { SerialPortManager } from './serialPortManager.js';
 import { DEV_SERVER_ORIGIN, isAllowedRendererUrl } from './security.js';
+import { createShutdownCoordinator } from './shutdownCoordinator.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST_ROOT = path.join(__dirname, '..', 'dist');
@@ -27,6 +28,12 @@ const serialManager = new SerialPortManager({
   onError: (message) => sendToRenderer(channels.serialError, message),
   onUnexpectedClose: () => sendToRenderer(channels.serialClose),
 });
+const reportSerialCloseFailure = (error: unknown) => console.error('Failed to close serial port', error);
+const appShutdown = createShutdownCoordinator(
+  () => serialManager.shutdown(),
+  () => app.quit(),
+  reportSerialCloseFailure,
+);
 
 function assertTrustedSender(event: IpcMainInvokeEvent): void {
   const frame = event.senderFrame;
@@ -111,9 +118,12 @@ async function createWindow(): Promise<void> {
   window.webContents.on('will-navigate', preventUntrustedNavigation);
   window.webContents.on('will-redirect', preventUntrustedNavigation);
   window.once('ready-to-show', () => window.show());
-  window.on('close', () => {
-    void serialManager.close().catch((error: unknown) => console.error('Failed to close serial port', error));
-  });
+  const windowShutdown = createShutdownCoordinator(
+    () => serialManager.close(),
+    () => { if (!window.isDestroyed()) window.destroy(); },
+    reportSerialCloseFailure,
+  );
+  window.on('close', (event) => windowShutdown.request(event));
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = undefined;
   });
@@ -134,7 +144,7 @@ app.whenReady().then(async () => {
   app.quit();
 });
 
-app.on('before-quit', () => { void serialManager.shutdown(); });
+app.on('before-quit', (event) => appShutdown.request(event));
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });

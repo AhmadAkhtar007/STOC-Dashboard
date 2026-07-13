@@ -190,4 +190,38 @@ describe('SerialPortManager', () => {
     await expect(manager.open('COM8')).resolves.toBeUndefined();
     expect(manager.state).toBe('open');
   });
+
+  it('settles close when the driver emits close without invoking its callback', async () => {
+    const { manager, ports } = setup();
+    await manager.open('COM7');
+    const port = ports.get('COM7')!;
+    port.close.mockImplementationOnce(() => {
+      port.isOpen = false;
+      port.emit('close');
+    });
+
+    const closePromise = manager.close();
+
+    await expect(closePromise).resolves.toBeUndefined();
+    expect(manager.state).toBe('closed');
+  });
+
+  it('times out a close whose callback and close event are both omitted', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, ports } = setup();
+      await manager.open('COM7');
+      const port = ports.get('COM7')!;
+      port.close.mockImplementationOnce(() => undefined);
+      const settled = vi.fn();
+
+      void manager.close().then(settled, (error: Error) => settled(error.message));
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(settled).toHaveBeenCalledWith('Serial port close timed out');
+      expect(manager.state).toBe('open');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

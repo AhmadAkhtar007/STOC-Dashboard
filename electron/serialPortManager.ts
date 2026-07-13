@@ -1,5 +1,7 @@
 import { Buffer } from 'node:buffer';
 
+const CLOSE_TIMEOUT_MS = 2_000;
+
 export type SerialLifecycleState = 'closed' | 'opening' | 'open' | 'closing';
 
 export interface ManagedSerialPort {
@@ -139,7 +141,15 @@ export class SerialPortManager {
     this.expectedClosures.add(port);
     let closeError: unknown;
     try {
-      if (port.isOpen) await callbackOperation((done) => port.close(done));
+      if (port.isOpen) {
+        await this.runNativeOperation(
+          port,
+          'Serial port closed while closing',
+          (done) => port.close(done),
+          CLOSE_TIMEOUT_MS,
+          'Serial port close timed out',
+        );
+      }
     } catch (error) {
       closeError = error;
     }
@@ -192,12 +202,16 @@ export class SerialPortManager {
     port: ManagedSerialPort,
     disconnectedMessage: string,
     start: (done: (error?: Error | null) => void) => void,
+    timeoutMs?: number,
+    timeoutMessage?: string,
   ): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       let settled = false;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
       const settle = (error?: Error | null) => {
         if (settled) return;
         settled = true;
+        if (timeout !== undefined) clearTimeout(timeout);
         pending.delete(abort);
         if (error) reject(error);
         else resolve();
@@ -206,6 +220,12 @@ export class SerialPortManager {
       const pending = this.pendingNativeOperations.get(port) ?? new Set<(error: Error) => void>();
       this.pendingNativeOperations.set(port, pending);
       pending.add(abort);
+      if (timeoutMs !== undefined) {
+        timeout = setTimeout(
+          () => settle(new Error(timeoutMessage ?? 'Serial operation timed out')),
+          timeoutMs,
+        );
+      }
       try {
         start(settle);
       } catch (error) {
@@ -220,10 +240,4 @@ export class SerialPortManager {
     for (const abort of [...pending]) abort(error);
     this.pendingNativeOperations.delete(port);
   }
-}
-
-function callbackOperation(start: (done: (error?: Error | null) => void) => void): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    start((error) => error ? reject(error) : resolve());
-  });
 }
