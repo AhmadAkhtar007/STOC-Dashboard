@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App'
+import { TestController } from './controller/testController'
 import type { TestResult } from './domain/types'
 import type { StocDesktopApi } from './electron'
 
@@ -60,6 +61,43 @@ describe('App', () => {
     expect(screen.getByText('125 ms')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /export json/i })).toBeEnabled()
     expect(screen.getByRole('button', { name: /print summary/i })).toBeEnabled()
+  })
+
+  it('lets a saved history selection replace the latest live result', async () => {
+    const saved: TestResult = {
+      id: 'saved-run', startedAt: 1_000, completedAt: 1_125, adapterKind: 'simulator',
+      metadata: { meterSerialNumber: 'SAVED-42' },
+      profile: { id: 'single-phase', name: 'Single Phase', targetAmps: 1_200, durationMs: 10, serialCommand: '1' },
+      samples: [512, 600], rawPeak: 600, outcome: 'sequence-complete',
+    }
+    const latest: TestResult = {
+      ...saved,
+      id: 'latest-run',
+      metadata: { meterSerialNumber: 'LATEST-7' },
+      profile: { id: 'ltct', name: 'LTCT', targetAmps: 300, durationMs: 500, serialCommand: '3' },
+    }
+    const snapshot = {
+      state: { status: 'complete' as const, profileId: 'ltct' as const, samples: [...latest.samples] },
+      logs: [],
+      result: latest,
+      connectionLabel: 'STOC Simulator',
+    }
+    const controller = {
+      getSnapshot: () => snapshot,
+      subscribe: (listener: (value: typeof snapshot) => void) => { listener(snapshot); return () => undefined },
+      detachAdapter: vi.fn(),
+    } as unknown as TestController
+    const storage: Storage = {
+      length: 1, clear: vi.fn(), getItem: vi.fn(() => JSON.stringify([saved])),
+      key: vi.fn(() => 'stoc:test-results:v1'), removeItem: vi.fn(), setItem: vi.fn(),
+    }
+    render(<App controller={controller} storage={storage} />)
+
+    expect(screen.getByText('LATEST-7')).toBeInTheDocument()
+    await screen.getByRole('button', { name: /open run saved-42/i }).click()
+
+    expect(screen.getByRole('group', { name: /run instrumentation/i })).toHaveTextContent('Single Phase')
+    expect(screen.getByRole('button', { name: /open run saved-42/i })).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('offers discovered serial ports only when the Electron bridge is present', async () => {

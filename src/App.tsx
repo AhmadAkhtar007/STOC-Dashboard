@@ -83,6 +83,9 @@ export default function App({ adapter: suppliedAdapter, controller: suppliedCont
 
   const status = snapshot.state.status;
   useEffect(() => {
+    setSelectedHistoryId(undefined);
+  }, [snapshot.result?.id]);
+  useEffect(() => {
     const wasDisconnected = previousStatus.current === 'disconnected';
     previousStatus.current = status;
     if (serialAdapter && status === 'disconnected' && !wasDisconnected) void refreshPorts();
@@ -105,7 +108,7 @@ export default function App({ adapter: suppliedAdapter, controller: suppliedCont
     controller.reset();
     setUiError(undefined);
   };
-  const selected = snapshot.result ?? history.find((result) => result.id === selectedHistoryId);
+  const selected = history.find((result) => result.id === selectedHistoryId) ?? snapshot.result;
   const retrySave = () => {
     if (!unsavedResult) return;
     try {
