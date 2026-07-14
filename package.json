@@ -19,6 +19,7 @@
     "build:desktop": "npm run build:web && npm run build:electron",
     "start:electron": "electron .",
     "package:win": "npm run build:desktop && electron-builder --win portable",
+    "setup:proteus": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/setup-proteus.ps1",
     "pretest": "npm run test:types",
     "test": "vitest run",
     "test:types": "tsc -p tsconfig.types.json"

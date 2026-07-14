@@ -13,6 +13,24 @@ You need:
 
 The examples below use **COM10** for Proteus and **COM11** for the dashboard. If either number already exists on the presentation machine, select another unused pair and substitute those numbers throughout.
 
+## Automated workstation preparation
+
+From the repository root on Windows, run:
+
+```powershell
+npm run setup:proteus
+```
+
+The command validates the bundled `EMP.pdsprj` and Intel HEX file, copies the HEX to `Downloads/STOC_Firmware/build/arduino.avr.mega/STOC_Firmware.ino.hex` (the legacy relative location already stored in the archive), runs `npm ci`, and compiles the web and Electron application with `npm run build:desktop`. It does not install Proteus, install a virtual COM-pair driver, modify the `.pdsprj` archive/schematic, open a serial port, or claim live validation.
+
+To preview every action without copying, installing, or building:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/setup-proteus.ps1 -DryRun
+```
+
+After the command succeeds, continue with the COM-pair and COMPIM steps below.
+
 ## 1. Correct the ATmega2560 firmware path
 
 The packaged Proteus project still references an original-development path:
@@ -21,7 +39,7 @@ The packaged Proteus project still references an original-development path:
 ..\Downloads\STOC_Firmware\build\arduino.avr.mega\STOC_Firmware.ino.hex
 ```
 
-That path is not portable. Correct it in the Proteus UI; do not edit the `.pdsprj` archive by hand.
+That path is not portable. `npm run setup:proteus` satisfies it by copying the bundled HEX to that relative location without editing the `.pdsprj` archive. If you did not run the setup command, correct it in the Proteus UI; do not edit the `.pdsprj` archive by hand.
 
 1. Open `projectsuccessfullyruned/EMP.pdsprj` in Proteus.
 2. Stop the simulation if it is running.

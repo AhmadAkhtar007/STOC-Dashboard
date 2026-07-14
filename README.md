@@ -11,13 +11,13 @@ This release is a laboratory demonstration, not a calibrated meter-certification
 - npm (included with Node.js)
 - For live Proteus use: Proteus 8 and a Windows virtual null-modem COM-pair driver
 
-Install dependencies from the repository root:
+For a Windows Proteus workstation, validate the bundled project and firmware, create the legacy firmware path expected by the unchanged archive, install locked dependencies, and compile the desktop application with one command:
 
 ```powershell
-npm install
+npm run setup:proteus
 ```
 
-For a repeatable install when `package-lock.json` has not changed, `npm ci` is also supported.
+This command runs `npm ci` and `npm run build:desktop`. It does not install Proteus or a virtual COM-pair driver, alter the schematic/archive, or perform live serial/electrical validation. Its final output gives the exact COM-pair and 9600 8N1 steps. To inspect its actions without copying firmware, installing dependencies, or building, run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/setup-proteus.ps1 -DryRun`.
 
 ## Run the browser dashboard
 
@@ -79,6 +79,8 @@ The simulator is the reliable demonstration path. It generates a deterministic 2
 ## Proteus or Arduino serial operation
 
 Serial operation is available only in Electron. The current firmware protocol uses 9600 baud, 8 data bits, no parity, one stop bit, and no flow control (9600 8N1).
+
+On a fresh Windows workstation, run `npm run setup:proteus` first. The script validates `projectsuccessfullyruned/EMP.pdsprj` and the bundled HEX, then copies the HEX to the legacy relative path already recorded inside the Proteus archive without modifying the archive itself.
 
 1. Start Proteus with COMPIM connected to one endpoint of a virtual COM pair, or connect the Arduino Mega over USB.
 2. Start the Electron dashboard.
